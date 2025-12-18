@@ -1,0 +1,70 @@
+{% extends "base.html" %}
+{% block title %}Patient EMR{% endblock %}
+
+{% block content %}
+<a href="/dashboard" class="back-link">← Back to Patients</a>
+
+{% if error %}
+    <div class="alert">{{ error }}</div>
+{% endif %}
+
+{% if patient %}
+    <h1>
+        {% if patient.name %}
+            {{ patient.name[0].given[0] if patient.name[0].given else "" }}
+            {{ patient.name[0].family if patient.name[0].family else "" }}
+        {% else %}
+            Patient {{ patient.id }}
+        {% endif %}
+    </h1>
+
+    <div class="grid">
+        <section class="card">
+            <h2>Basic Info</h2>
+            <p><strong>ID:</strong> {{ patient.id }}</p>
+            <p><strong>Gender:</strong> {{ patient.gender if patient.gender else "-" }}</p>
+            <p><strong>Birth Date:</strong> {{ patient.birthDate if patient.birthDate else "-" }}</p>
+        </section>
+
+        <section class="card">
+            <h2>Active Problems (Conditions)</h2>
+            {% if conditions|length == 0 %}
+                <p>No conditions recorded.</p>
+            {% else %}
+                <ul>
+                    {% for c in conditions %}
+                        <li>
+                            {{ c.code.text if c.code and c.code.text else "Condition" }}
+                            {% if c.code and c.code.coding %}
+                                ({{ c.code.coding[0].code }} - {{ c.code.coding[0].system }})
+                            {% endif %}
+                        </li>
+                    {% endfor %}
+                </ul>
+            {% endif %}
+        </section>
+
+        <section class="card">
+            <h2>Recent Vitals (Observations)</h2>
+            {% if observations|length == 0 %}
+                <p>No observations recorded.</p>
+            {% else %}
+                <ul>
+                    {% for o in observations %}
+                        <li>
+                            {{ o.code.text if o.code and o.code.text else "Observation" }} :
+                            {% if o.valueQuantity %}
+                                {{ o.valueQuantity.value }} {{ o.valueQuantity.unit }}
+                            {% else %}
+                                -
+                            {% endif %}
+                        </li>
+                    {% endfor %}
+                </ul>
+            {% endif %}
+        </section>
+    </div>
+{% else %}
+    <p>Patient not found.</p>
+{% endif %}
+{% endblock %}

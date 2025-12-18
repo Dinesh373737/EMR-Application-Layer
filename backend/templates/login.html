@@ -1,0 +1,20 @@
+{% extends "base.html" %}
+{% block title %}Login - EMR{% endblock %}
+
+{% block content %}
+<div class="card">
+    <h2>Login to EMR</h2>
+    {% if error %}
+        <div class="alert">{{ error }}</div>
+    {% endif %}
+    <form method="post" action="/login" class="form">
+        <label>Username</label>
+        <input type="text" name="username" required>
+
+        <label>Password</label>
+        <input type="password" name="password" required>
+
+        <button type="submit">Login</button>
+    </form>
+</div>
+{% endblock %}

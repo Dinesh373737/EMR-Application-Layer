@@ -1,0 +1,49 @@
+{% extends "base.html" %}
+
+{% block title %}Upload Report - EMR{% endblock %}
+
+{% block head %}
+<link rel="stylesheet" href="/static/css/upload.css">
+{% endblock %}
+
+{% block content %}
+<h1>Upload Medical Report</h1>
+
+<div class="card">
+    {% if error %}
+        <div class="alert">{{ error }}</div>
+    {% endif %}
+
+    <form method="post" action="/upload-report" enctype="multipart/form-data" class="form">
+        <label>Patient ID (FHIR ID or internal code)</label>
+        <input type="text" name="patient_id" value="{{ patient_id }}" required>
+
+        <label>Report File (PDF/Image)</label>
+        <input type="file" name="file" accept=".pdf,.png,.jpg,.jpeg" required>
+
+        <button type="submit">Upload & Extract</button>
+    </form>
+</div>
+
+{% if result_json %}
+<div class="card">
+    <h2>Extracted Patient Details</h2>
+
+    <table class="info-table">
+        <tr><th>Patient Name</th><td>{{ result_json.PII.Patient_Name }}</td></tr>
+        <tr><th>Date of Birth</th><td>{{ result_json.PII.DOB }}</td></tr>
+        <tr><th>Patient ID</th><td>{{ result_json.PII.Patient_ID }}</td></tr>
+        <tr><th>Date of Admission</th><td>{{ result_json.PII.Date_of_Admission }}</td></tr>
+        <tr><th>Chief Complaint</th><td>{{ result_json.Admission_Reason }}</td></tr>
+        <tr><th>Doctor</th><td>{{ result_json.Doctor }}</td></tr>
+        <tr><th>Department</th><td>{{ result_json.Department }}</td></tr>
+    </table>
+
+    <form action="/save-extracted" method="post" onsubmit="return confirmSave();">
+        <input type="hidden" name="patient_data" value='{{ result_json | tojson }}'>
+        <button type="submit" class="primary-btn">Save to EMR</button>
+    </form>
+</div>
+{% endif %}
+
+{% endblock %}

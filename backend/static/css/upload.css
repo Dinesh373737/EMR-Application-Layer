@@ -1,0 +1,17 @@
+.upload-box {
+    border: 2px dashed #999;
+    padding: 30px;
+    text-align: center;
+    background-color: #fafafa;
+    margin-top: 20px;
+}
+
+.upload-box input[type="file"] {
+    margin-top: 15px;
+}
+
+pre {
+    background-color: #f0f0f0;
+    padding: 15px;
+    overflow-x: auto;
+}

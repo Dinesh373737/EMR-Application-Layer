@@ -1,0 +1,44 @@
+{% extends "base.html" %}
+{% block title %}Patients - EMR{% endblock %}
+
+{% block content %}
+<h1>Patient List</h1>
+
+{% if error %}
+    <div class="alert">{{ error }}</div>
+{% endif %}
+
+{% if patients|length == 0 %}
+    <p>No patients found.</p>
+{% else %}
+<table class="table">
+    <thead>
+    <tr>
+        <th>Patient ID</th>
+        <th>Name</th>
+        <th>Gender</th>
+        <th>Birth Date</th>
+        <th>Actions</th>
+    </tr>
+    </thead>
+    <tbody>
+    {% for p in patients %}
+        <tr>
+            <td>{{ p.id }}</td>
+            <td>
+                {% if p.name %}
+                    {{ p.name[0].given[0] if p.name[0].given else "" }}
+                    {{ p.name[0].family if p.name[0].family else "" }}
+                {% else %}
+                    -
+                {% endif %}
+            </td>
+            <td>{{ p.gender if p.gender else "-" }}</td>
+            <td>{{ p.birthDate if p.birthDate else "-" }}</td>
+            <a href="/emr/{{ patient.id }}">View EMR</a>
+        </tr>
+    {% endfor %}
+    </tbody>
+</table>
+{% endif %}
+{% endblock %}
