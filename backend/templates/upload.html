@@ -7,43 +7,266 @@
 {% endblock %}
 
 {% block content %}
-<h1>Upload Medical Report</h1>
+<div class="container">
+    <div style="text-align: center; margin-bottom: 40px;">
+        <h1>Medical Report Processing</h1>
+        <p style="color: #666; font-size: 1.1em;">Upload scanned reports for automated data extraction and FHIR
+            harmonization.</p>
+    </div>
 
-<div class="card">
-    {% if error %}
-        <div class="alert">{{ error }}</div>
+    <!-- Upload Section -->
+    <div class="card">
+        {% if error %}
+        <div class="alert alert-error">{{ error }}</div>
+        {% endif %}
+
+        <form method="post" action="/upload-report" enctype="multipart/form-data">
+            <div class="upload-box">
+                <h3 style="margin-top:0;">Upload New Document</h3>
+                <p>Drag and drop your file here or click to browse</p>
+                <input type="file" name="file" accept=".pdf,.png,.jpg,.jpeg" required style="display:inline-block;">
+                <br>
+                <small style="color: #888;">Supported formats: PDF, PNG, JPG</small>
+                <br><br>
+                <button type="submit" class="primary-btn">Upload & Extract</button>
+            </div>
+        </form>
+    </div>
+
+    {% if result_json %}
+
+    <!-- Results Header -->
+    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
+        <h2>Extracted Clinical Data</h2>
+        <span style="background: #e9ecef; padding: 5px 15px; border-radius: 20px; font-weight: bold; color: #555;">
+            Type: {{ result_json.Document_Type }}
+        </span>
+    </div>
+
+    <!-- PII / Patient Demographics -->
+    {% if result_json.PII %}
+    <div class="card patient-header">
+        <h3 style="margin-top:0;">Patient Demographics</h3>
+        <div class="row">
+            <div class="col">
+                <strong>Patient Name:</strong>
+                <div style="font-size: 1.2em; color: #333;">{{ result_json.PII.Name }}</div>
+            </div>
+            <div class="col">
+                <strong>Patient ID:</strong>
+                <div style="font-family: monospace;">{{ result_json.PII.ID }}</div>
+            </div>
+            <div class="col">
+                <strong>DOB:</strong>
+                <div>{{ result_json.PII.DOB }}</div>
+            </div>
+            <div class="col">
+                <strong>Report Date:</strong>
+                <div>{{ result_json.PII.Date or result_json.PII.Admission_Date }}</div>
+            </div>
+            {% if result_json.PII.Discharge_Date %}
+            <div class="col">
+                <strong>Discharge Date:</strong>
+                <div>{{ result_json.PII.Discharge_Date }}</div>
+            </div>
+            {% endif %}
+        </div>
+    </div>
     {% endif %}
 
-    <form method="post" action="/upload-report" enctype="multipart/form-data" class="form">
-        <label>Patient ID (FHIR ID or internal code)</label>
-        <input type="text" name="patient_id" value="{{ patient_id }}" required>
+    <div class="row">
+        <!-- Column 1: Visits & Doctors -->
+        <div class="col" style="flex: 1;">
+            {% if result_json.Admission_Reason or result_json.Doctor or result_json.Department %}
+            <div class="card">
+                <h3>Encounter Details</h3>
+                <table class="info-table">
+                    {% if result_json.Admission_Reason %}
+                    <tr>
+                        <th>Admission Reason</th>
+                        <td>{{ result_json.Admission_Reason }}</td>
+                    </tr>
+                    {% endif %}
+                    {% if result_json.Doctor %}
+                    <tr>
+                        <th>Attending Doctor</th>
+                        <td>{{ result_json.Doctor }}</td>
+                    </tr>
+                    {% endif %}
+                    {% if result_json.Department %}
+                    <tr>
+                        <th>Department</th>
+                        <td>{{ result_json.Department }}</td>
+                    </tr>
+                    {% endif %}
+                    {% if result_json.Outcome %}
+                    <tr>
+                        <th>Outcome</th>
+                        <td>{{ result_json.Outcome }}</td>
+                    </tr>
+                    {% endif %}
+                </table>
+            </div>
+            {% endif %}
+        </div>
 
-        <label>Report File (PDF/Image)</label>
-        <input type="file" name="file" accept=".pdf,.png,.jpg,.jpeg" required>
+        <!-- Column 2: Clinical Summary -->
+        <div class="col" style="flex: 2;">
+            {% if result_json.Disease_disorder and result_json.Disease_disorder|length > 0 %}
+            <div class="card">
+                <h3>Diagnosis / Conditions</h3>
+                <ul class="tag-list">
+                    {% for item in result_json.Disease_disorder %}
+                    {% if item %}<li>{{ item }}</li>{% endif %}
+                    {% endfor %}
 
-        <button type="submit">Upload & Extract</button>
-    </form>
+                    {% for item in result_json.Diagnosis %}
+                    {% if item %}<li>{{ item }}</li>{% endif %}
+                    {% endfor %}
+                </ul>
+            </div>
+            {% endif %}
+
+            {% if result_json.Symptoms and result_json.Symptoms|length > 0 %}
+            <div class="card">
+                <h3>Symptoms Reported</h3>
+                <ul class="tag-list">
+                    {% for item in result_json.Symptoms %}
+                    {% if item %}<li>{{ item }}</li>{% endif %}
+                    {% endfor %}
+                </ul>
+            </div>
+            {% endif %}
+        </div>
+    </div>
+
+    <!-- Clinical Findings Table -->
+    {% if result_json.Clinical_finding_names and result_json.Clinical_finding_names|length > 0 %}
+    <div class="card">
+        <h3>Clinical Findings</h3>
+        <table class="info-table">
+            <thead>
+                <tr>
+                    <th>Finding Name</th>
+                    <th>Value</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for name in result_json.Clinical_finding_names %}
+                <tr>
+                    <td>{{ name }}</td>
+                    <td>
+                        {% if loop.index0 < result_json.Clinical_finding_values|length %} {{
+                            result_json.Clinical_finding_values[loop.index0] }} {% else %} - {% endif %} </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% endif %}
+
+    <!-- Lab Tests Table -->
+    {% if result_json.Lab_Tests and result_json.Lab_Tests|length > 0 %}
+    <div class="card">
+        <h3>Lab Results</h3>
+        <table class="info-table">
+            <thead>
+                <tr>
+                    <th>Test Name</th>
+                    <th>Value</th>
+                    <th>Unit</th>
+                    <th>Reference Range</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for test in result_json.Lab_Tests %}
+                <tr>
+                    <td>{{ test.Name }}</td>
+                    <td><strong style="color: #2c3e50;">{{ test.Value }}</strong></td>
+                    <td>{{ test.Unit }}</td>
+                    <td style="color: #666; font-size: 0.9em;">{{ test.Reference_Range }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% endif %}
+
+    <div class="row">
+        <!-- Medications -->
+        <div class="col">
+            {% if result_json.Medication and result_json.Medication|length > 0 %}
+            <div class="card">
+                <h3>Medications</h3>
+                <table class="info-table">
+                    <thead>
+                        <tr>
+                            <th>Medication</th>
+                            <th>Dosage</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for med in result_json.Medication %}
+                        <tr>
+                            <td><strong>{{ med }}</strong></td>
+                            <td>
+                                {% if result_json.Dosage and loop.index0 < result_json.Dosage|length %} {{
+                                    result_json.Dosage[loop.index0] }} {% endif %} </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+            {% endif %}
+        </div>
+
+        <!-- Procedures/Instructions -->
+        <div class="col">
+            {% if result_json.Procedure and result_json.Procedure|length > 0 %}
+            <div class="card">
+                <h3>Procedures Performed</h3>
+                <ul class="tag-list">
+                    {% for proc in result_json.Procedure %}
+                    {% if proc %}<li>{{ proc }}</li>{% endif %}
+                    {% endfor %}
+                </ul>
+            </div>
+            {% endif %}
+
+            {% if result_json.Instructions and result_json.Instructions|length > 0 %}
+            <div class="card">
+                <h3>Discharge Instructions</h3>
+                <ul>
+                    {% for inst in result_json.Instructions %}
+                    <li style="margin-bottom: 5px;">{{ inst }}</li>
+                    {% endfor %}
+                </ul>
+            </div>
+            {% endif %}
+        </div>
+    </div>
+
+    <!-- Action Bar -->
+    <div class="card" style="position: sticky; bottom: 0; border: 2px solid #0056b3; background: #f0f7ff;">
+        <div style="display: flex; justify-content: space-between; align-items: center;">
+            <div style="font-size: 0.9em; color: #555;">
+                <strong>Review Action:</strong> Please verify the extracted data above before mapping to FHIR.
+            </div>
+            <form action="/save-extracted" method="post" onsubmit="return confirmSave();" style="margin: 0;">
+                <input type="hidden" name="patient_data" value='{{ result_json | tojson }}'>
+                <button type="submit" class="primary-btn">
+                    Process & Harmonize to FHIR →
+                </button>
+            </form>
+        </div>
+    </div>
+
+    {% endif %}
 </div>
 
-{% if result_json %}
-<div class="card">
-    <h2>Extracted Patient Details</h2>
-
-    <table class="info-table">
-        <tr><th>Patient Name</th><td>{{ result_json.PII.Patient_Name }}</td></tr>
-        <tr><th>Date of Birth</th><td>{{ result_json.PII.DOB }}</td></tr>
-        <tr><th>Patient ID</th><td>{{ result_json.PII.Patient_ID }}</td></tr>
-        <tr><th>Date of Admission</th><td>{{ result_json.PII.Date_of_Admission }}</td></tr>
-        <tr><th>Chief Complaint</th><td>{{ result_json.Admission_Reason }}</td></tr>
-        <tr><th>Doctor</th><td>{{ result_json.Doctor }}</td></tr>
-        <tr><th>Department</th><td>{{ result_json.Department }}</td></tr>
-    </table>
-
-    <form action="/save-extracted" method="post" onsubmit="return confirmSave();">
-        <input type="hidden" name="patient_data" value='{{ result_json | tojson }}'>
-        <button type="submit" class="primary-btn">Save to EMR</button>
-    </form>
-</div>
-{% endif %}
-
+<script>
+    function confirmSave() {
+        return confirm("Proceed to harmonize this data to FHIR?");
+    }
+</script>
 {% endblock %}

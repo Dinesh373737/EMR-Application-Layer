@@ -35,7 +35,7 @@
             </td>
             <td>{{ p.gender if p.gender else "-" }}</td>
             <td>{{ p.birthDate if p.birthDate else "-" }}</td>
-            <a href="/emr/{{ patient.id }}">View EMR</a>
+            <td><a href="/emr/{{ p.id }}">View EMR</a></td>
         </tr>
     {% endfor %}
     </tbody>

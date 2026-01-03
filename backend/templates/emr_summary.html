@@ -10,7 +10,16 @@
 {% if patient %}
 <!-- ================= PATIENT HEADER ================= -->
 <div class="card">
-    <h1>{{ patient.name[0].text }}</h1>
+    <h1>
+        {% if patient.name and patient.name[0] and patient.name[0].text %}
+        {{ patient.name[0].text }}
+        {% elif patient.name and patient.name[0] %}
+        {{ patient.name[0].given[0] if patient.name[0].given else "" }} {{ patient.name[0].family if
+        patient.name[0].family else "" }}
+        {% else %}
+        Unknown Patient
+        {% endif %}
+    </h1>
     <p><strong>Patient ID:</strong> {{ patient.id }}</p>
     <p><strong>Date of Birth:</strong> {{ patient.birthDate or "NA" }}</p>
 </div>
@@ -20,9 +29,9 @@
     <h2>Admission Details</h2>
 
     {% if conditions %}
-        <p><strong>Chief Complaint:</strong> {{ conditions[0].code.text }}</p>
+    <p><strong>Chief Complaint:</strong> {{ conditions[0].code.text }}</p>
     {% else %}
-        <p><strong>Chief Complaint:</strong> NA</p>
+    <p><strong>Chief Complaint:</strong> NA</p>
     {% endif %}
 
     <p><strong>Status:</strong> Active</p>
@@ -33,13 +42,13 @@
     <h2>Active Problems</h2>
 
     {% if conditions %}
-        <ul>
+    <ul>
         {% for condition in conditions %}
-            <li>{{ condition.code.text }}</li>
+        <li>{{ condition.code.text }}</li>
         {% endfor %}
-        </ul>
+    </ul>
     {% else %}
-        <p>No active problems recorded</p>
+    <p>No active problems recorded</p>
     {% endif %}
 </div>
 
@@ -48,24 +57,24 @@
     <h2>Vitals</h2>
 
     {% set vitals = {
-        "Blood Pressure": "NA",
-        "Pulse": "NA",
-        "Temperature": "NA",
-        "Weight": "NA"
+    "Blood Pressure": "NA",
+    "Pulse": "NA",
+    "Temperature": "NA",
+    "Weight": "NA"
     } %}
 
     {% for obs in observations %}
-        {% if obs.code.text %}
-            {% if "pressure" in obs.code.text|lower %}
-                {% set _ = vitals.update({"Blood Pressure": obs.valueQuantity.value}) %}
-            {% elif "pulse" in obs.code.text|lower %}
-                {% set _ = vitals.update({"Pulse": obs.valueQuantity.value}) %}
-            {% elif "temp" in obs.code.text|lower %}
-                {% set _ = vitals.update({"Temperature": obs.valueQuantity.value}) %}
-            {% elif "weight" in obs.code.text|lower %}
-                {% set _ = vitals.update({"Weight": obs.valueQuantity.value}) %}
-            {% endif %}
-        {% endif %}
+    {% if obs.code.text %}
+    {% if "pressure" in obs.code.text|lower %}
+    {% set _ = vitals.update({"Blood Pressure": obs.valueQuantity.value}) %}
+    {% elif "pulse" in obs.code.text|lower %}
+    {% set _ = vitals.update({"Pulse": obs.valueQuantity.value}) %}
+    {% elif "temp" in obs.code.text|lower %}
+    {% set _ = vitals.update({"Temperature": obs.valueQuantity.value}) %}
+    {% elif "weight" in obs.code.text|lower %}
+    {% set _ = vitals.update({"Weight": obs.valueQuantity.value}) %}
+    {% endif %}
+    {% endif %}
     {% endfor %}
 
     <table>
@@ -84,10 +93,10 @@
     <ul>
         <li>Patient record created</li>
         {% for condition in conditions %}
-            <li>Condition added: {{ condition.code.text }}</li>
+        <li>Condition added: {{ condition.code.text }}</li>
         {% endfor %}
         {% for obs in observations %}
-            <li>Observation recorded: {{ obs.code.text }}</li>
+        <li>Observation recorded: {{ obs.code.text }}</li>
         {% endfor %}
     </ul>
 </div>

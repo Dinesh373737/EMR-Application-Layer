@@ -10,21 +10,26 @@ from fastapi.templating import Jinja2Templates
 
 app = FastAPI()
 
+DEV = True
+
 # ---------- Paths ----------
 BASE_DIR = Path(__file__).resolve().parent
 
 # ---------- External Microservices ----------
 
 # Flask Data Access Service (Microservice 4)
-FHIR_BASE_URL = os.getenv("FHIR_BASE_URL", "http://localhost:5004/api/fhir")
-AUTH_BASE_URL = os.getenv("AUTH_BASE_URL", "http://localhost:5004/api/auth")
+FHIR_BASE_URL = os.getenv("FHIR_BASE_URL", "http://localhost:5000/api/fhir")
+AUTH_BASE_URL = os.getenv("AUTH_BASE_URL", "http://localhost:5000/api/auth")
 
 # Extraction Service (Microservice 1) - TODO: adjust this URL + path
-EXTRACTION_BASE_URL = os.getenv("EXTRACTION_BASE_URL", "http://localhost:8001")
+EXTRACTION_BASE_URL = os.getenv("EXTRACTION_BASE_URL", "http://localhost:8000")
 EXTRACTION_ENDPOINT = os.getenv(
     "EXTRACTION_ENDPOINT",
     f"{EXTRACTION_BASE_URL}/extract"  # change to the actual route used in MS-1
 )
+
+MAPPING_ENDPOINT = "http://localhost:5005"
+ACE_ENDPOINT = "http://localhost:5001"
 
 TOKEN_COOKIE_NAME = "access_token"
 
@@ -52,7 +57,7 @@ def build_auth_headers(token: str | None) -> dict:
 async def root(request: Request):
     """Redirect root to login or dashboard depending on token."""
     token = get_token(request)
-    if token:
+    if token or DEV:
         return RedirectResponse(url="/dashboard", status_code=302)
     return RedirectResponse(url="/login", status_code=302)
 
@@ -137,7 +142,7 @@ async def logout(request: Request):
 @app.get("/dashboard", response_class=HTMLResponse)
 async def dashboard(request: Request):
     token = get_token(request)
-    if not token:
+    if not token and not DEV:
         return RedirectResponse(url="/login", status_code=302)
 
     patients = []
@@ -145,7 +150,8 @@ async def dashboard(request: Request):
 
     try:
         resp = requests.get(
-            f"{FHIR_BASE_URL}/Patient",
+            f"{FHIR_BASE_URL}/search",
+            params={"type": "Patient", "limit": 50},
             headers=build_auth_headers(token),
             timeout=5,
         )
@@ -176,7 +182,7 @@ async def dashboard(request: Request):
 @app.get("/patient/{patient_id}", response_class=HTMLResponse)
 async def patient_detail(request: Request, patient_id: str):
     token = get_token(request)
-    if not token:
+    if not token and not DEV:
         return RedirectResponse(url="/login", status_code=302)
 
     headers = build_auth_headers(token)
@@ -235,7 +241,7 @@ async def patient_detail(request: Request, patient_id: str):
 @app.get("/emr/{patient_id}", response_class=HTMLResponse)
 async def emr_summary(request: Request, patient_id: str):
     token = get_token(request)
-    if not token:
+    if not token and not DEV:
         return RedirectResponse(url="/login", status_code=302)
 
     headers = build_auth_headers(token)
@@ -311,7 +317,7 @@ async def emr_summary(request: Request, patient_id: str):
 async def upload_report_page(request: Request):
     """Show upload form for a report."""
     token = get_token(request)
-    if not token:
+    if not token and not DEV:
         return RedirectResponse(url="/login", status_code=302)
 
     return templates.TemplateResponse(
@@ -328,7 +334,6 @@ async def upload_report_page(request: Request):
 @app.post("/upload-report", response_class=HTMLResponse)
 async def upload_report(
     request: Request,
-    patient_id: str = Form(...),
     file: UploadFile = File(...)
 ):
     """
@@ -337,7 +342,7 @@ async def upload_report(
     Later we can send it onward to MS-4 as FHIR resources.
     """
     token = get_token(request)
-    if not token:
+    if not token and not DEV:
         return RedirectResponse(url="/login", status_code=302)
 
     error = None
@@ -348,9 +353,13 @@ async def upload_report(
         files = {
             "file": (file.filename, file_bytes, file.content_type or "application/octet-stream")
         }
+        data = {
+            "use_gemini": "true",
+            "use_ollama": "false"
+        }
 
         # NOTE: Adjust EXTRACTION_ENDPOINT to match actual MS-1 route
-        resp = requests.post(EXTRACTION_ENDPOINT, files=files, timeout=60)
+        resp = requests.post(EXTRACTION_ENDPOINT, files=files, data=data, timeout=120)
 
         if resp.status_code == 200:
             try:
@@ -378,45 +387,83 @@ async def upload_report(
             "request": request,
             "error": error,
             "result_json": result_json,
-            "patient_id": patient_id,
         },
     )
+
 @app.post("/save-extracted")
 async def save_extracted(request: Request, patient_data: str = Form(...)):
 
     token = get_token(request)
-    if not token:
+    if not token and not DEV:
         return RedirectResponse(url="/login", status_code=303)
 
     data = json.loads(patient_data)
+
     headers = build_auth_headers(token)
 
-    patient_payload = {
-        "resourceType": "Patient",
-        "id": data["PII"]["Patient_ID"],
-        "name": [{"text": data["PII"]["Patient_Name"]}],
-        "birthDate": data["PII"]["DOB"]
-    }
+    resp = requests.post(f'{ACE_ENDPOINT}/deidentify', headers=headers, json=data, timeout=60)
 
-    condition_payload = {
-        "resourceType": "Condition",
-        "subject": {"reference": f"Patient/{data['PII']['Patient_ID']}"},
-        "code": {"text": data["Admission_Reason"]}
+    payload = {
+        "document_type": data.get("Document_Type"),
+        "data": resp.json(),
     }
+    resp = requests.post(f'{MAPPING_ENDPOINT}/api/v1/map/document', headers=headers, json=payload, timeout=60)
+    print(resp.json())
 
-    requests.post(
-        f"{FHIR_BASE_URL}/Patient",
-        headers=headers,
-        json=patient_payload,
-        timeout=5
+    # Map raw -> FHIR
+    bundle_map = resp.json()
+
+    # Harmonize
+    resp = requests.post(f'{MAPPING_ENDPOINT}/api/v1/harmonize', headers=headers, json=bundle_map, timeout=60)
+    
+
+    harmonized_bundle = resp.json()
+
+    return templates.TemplateResponse(
+        "harmonized.html",
+        {
+            "request": request,
+            "data": data,
+            "bundle": harmonized_bundle
+        }
     )
 
-    requests.post(
-        f"{FHIR_BASE_URL}/Condition",
-        headers=headers,
-        json=condition_payload,
-        timeout=5
-    )
 
-    return RedirectResponse(url="/dashboard", status_code=303)
 
+@app.post("/confirm-save")
+async def confirm_save(request: Request, fhir_bundle: str = Form(...)):
+    """
+    User confirmed the harmonized bundle.
+    Send it to DB Service to be saved.
+    """
+    token = get_token(request)
+    if not token and not DEV:
+        return RedirectResponse(url="/login", status_code=303)
+
+    try:
+        bundle_data = json.loads(fhir_bundle)
+        headers = build_auth_headers(token)
+        
+        # Send to DB Service
+        resp = requests.post(
+            f"{FHIR_BASE_URL}/confirm",
+            headers=headers,
+            json=bundle_data,
+            timeout=10
+        )
+        
+        if resp.status_code == 201:
+            # Success! Redirect to dashboard or show success page
+            # For now, let's redirect to dashboard with a success parameter (optional)
+             return templates.TemplateResponse(
+                "success.html",
+                {
+                    "request": request,
+                    "message": "Medical records confirmed and saved successfully!"
+                }
+            )
+        else:
+            return HTMLResponse(content=f"Error saving data: {resp.text}", status_code=500)
+            
+    except Exception as e:
+        return HTMLResponse(content=f"Failed to process request: {str(e)}", status_code=500)

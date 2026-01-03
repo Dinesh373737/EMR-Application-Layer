@@ -1,0 +1,179 @@
+{% extends "base.html" %}
+
+{% block title %}Harmonized Monitor - EMR{% endblock %}
+
+{% block head %}
+<link rel="stylesheet" href="/static/css/upload.css">
+<style>
+    /* Specific styles for accordion/summary view */
+    .resource-summary {
+        padding: 15px;
+        background-color: #fff;
+        cursor: pointer;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        border-bottom: 1px solid #eee;
+    }
+
+    .resource-summary:hover {
+        background-color: #f8f9fa;
+    }
+
+    .resource-details {
+        display: none;
+        /* Hidden by default */
+        padding: 15px;
+        background-color: #fafafa;
+        border-top: 1px solid #e1e4e8;
+    }
+
+    /* Toggle class */
+    .show-details {
+        display: block;
+    }
+
+    .badge {
+        display: inline-block;
+        padding: 4px 8px;
+        border-radius: 4px;
+        font-size: 0.8em;
+        font-weight: bold;
+        color: #fff;
+    }
+
+    .badge-Patient {
+        background-color: #007bff;
+    }
+
+    .badge-Condition {
+        background-color: #dc3545;
+    }
+
+    .badge-MedicationStatement {
+        background-color: #28a745;
+    }
+
+    .badge-Observation {
+        background-color: #6610f2;
+    }
+
+    .badge-Procedure {
+        background-color: #fd7e14;
+    }
+
+    .badge-Encounter {
+        background-color: #17a2b8;
+    }
+
+    .badge-default {
+        background-color: #6c757d;
+    }
+
+    .summary-text {
+        flex-grow: 1;
+        margin-left: 15px;
+        color: #333;
+        font-weight: 500;
+    }
+</style>
+<script>
+    function toggleDetails(id) {
+        var el = document.getElementById(id);
+        if (el.style.display === "block") {
+            el.style.display = "none";
+        } else {
+            el.style.display = "block";
+        }
+    }
+</script>
+{% endblock %}
+
+{% block content %}
+<div class="container">
+    <div style="text-align: center; margin-bottom: 30px;">
+        <h1>Harmonized FHIR Resources</h1>
+        <p style="color: #666;">Standardized FHIR R4 Bundle ready for export.</p>
+    </div>
+
+    <div class="card">
+        <div
+            style="display:flex; justify-content:space-between; align-items:center; border-bottom: 2px solid #f1f1f1; padding-bottom: 15px; margin-bottom: 15px;">
+            <h3>Resource Bundle</h3>
+            {% if bundle and bundle.entry %}
+            <span style="color: #666; font-size: 0.9em;">Total Resources: <strong>{{ bundle.entry|length
+                    }}</strong></span>
+            {% endif %}
+        </div>
+
+        {% if bundle and bundle.entry %}
+        <div style="border: 1px solid #e1e4e8; border-radius: 6px; overflow: hidden;">
+            {% for entry in bundle.entry %}
+            {% set r = entry.resource %}
+            {% set r_type = r.resourceType %}
+            {% set unique_id = r_type + '-' + loop.index|string %}
+
+            <div class="resource-item">
+                <div class="resource-summary" onclick="toggleDetails('{{ unique_id }}')">
+                    <div style="display: flex; align-items: center;">
+                        <span
+                            class="badge badge-{{ r_type if r_type in ['Patient', 'Condition', 'MedicationStatement', 'Observation', 'Procedure', 'Encounter'] else 'default' }}">
+                            {{ r_type }}
+                        </span>
+                        <span class="summary-text">
+                            <!-- Dynamic Summary based on Resource Type -->
+                            {% if r_type == 'Patient' %}
+                            {{ r.name[0].given[0] if r.name and r.name[0].given else '' }} {{ r.name[0].family if r.name
+                            else 'Unknown' }}
+                            (DOB: {{ r.birthDate }})
+                            {% elif r_type == 'Condition' %}
+                            {{ r.code.text or (r.code.coding[0].display if r.code.coding else 'Unknown Condition') }}
+                            {% elif r_type == 'MedicationStatement' %}
+                            {{ r.medication.concept.text if r.medication.concept else (r.medicationCodeableConcept.text
+                            if r.medicationCodeableConcept else 'Unknown Med') }}
+                            {% elif r_type == 'Observation' %}
+                            {{ r.code.text or r.code.coding[0].display }}:
+                            <strong>{{ r.valueQuantity.value if r.valueQuantity else r.valueString }} {{
+                                r.valueQuantity.unit if r.valueQuantity else '' }}</strong>
+                            {% elif r_type == 'Procedure' %}
+                            {{ r.code.text }}
+                            {% elif r_type == 'Encounter' %}
+                            {{ r.class.code if r.class else 'Encounter' }} - {{ r.period.start if r.period else '' }}
+                            {% else %}
+                            Resource ID: {{ r.id }}
+                            {% endif %}
+                        </span>
+                    </div>
+                    <span style="color: #999; font-size: 0.8em;">▼</span>
+                </div>
+
+                <div id="{{ unique_id }}" class="resource-details">
+                    <div style="margin-bottom: 10px; font-size: 0.9em; color: #666;">
+                        <strong>FHIR Resource ID:</strong> {{ r.id }}
+                    </div>
+                    <div class="json-block">{{ r | tojson(indent=2) }}</div>
+                </div>
+            </div>
+            {% endfor %}
+        </div>
+
+        {% else %}
+        <div class="alert alert-error">
+            <strong>No resources generated.</strong> The harmonization process returned an empty bundle.
+        </div>
+        {% endif %}
+
+        <!-- Action Buttons -->
+        <div style="margin-top: 30px; display: flex; gap: 15px; justify-content: flex-end;">
+            <a href="/upload-report" class="btn secondary-btn">Cancel & Return</a>
+
+            <form action="/confirm-save" method="post" style="margin:0;">
+                <input type="hidden" name="fhir_bundle" value='{{ bundle | tojson }}'>
+                <button type="submit" class="primary-btn" style="background-color: #28a745;">
+                    ✓ Confirm & Save to FHIR Server
+                </button>
+            </form>
+        </div>
+    </div>
+</div>
+{% endblock %}

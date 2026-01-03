@@ -1,0 +1,16 @@
+{% extends "base.html" %}
+
+{% block title %}Success - EMR{% endblock %}
+
+{% block content %}
+<div class="container" style="text-align: center; padding-top: 50px;">
+    <div class="card" style="max-width: 600px; margin: 0 auto;">
+        <div style="color: #28a745; font-size: 60px; margin-bottom: 20px;">✓</div>
+        <h1>Success!</h1>
+        <p style="font-size: 1.2em; color: #555; margin-bottom: 30px;">
+            {{ message }}
+        </p>
+        <a href="/dashboard" class="primary-btn">Go to Dashboard</a>
+    </div>
+</div>
+{% endblock %}
