@@ -1,25 +1,29 @@
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
     <meta charset="UTF-8">
     <title>{% block title %}EMR Application{% endblock %}</title>
     <link rel="stylesheet" href="/static/css/style.css">
+    {% block head %}{% endblock %}
 </head>
+
 <body>
-<header class="top-bar">
-    <div class="logo">EMR Dashboard</div>
-    <nav>
-        <a href="/dashboard">Patients</a>
-        <a href="/upload-report">Upload Report</a>
-        <a href="/logout">Logout</a>
-    </nav>
-</header>
+    <header class="top-bar">
+        <div class="logo">EMR Dashboard</div>
+        <nav>
+            <a href="/dashboard">Patients</a>
+            <a href="/upload-report">Upload Report</a>
+            <a href="/logout">Logout</a>
+        </nav>
+    </header>
 
 
-<main class="content">
-    {% block content %}{% endblock %}
-</main>
+    <main class="content">
+        {% block content %}{% endblock %}
+    </main>
 
-<script src="/static/js/app.js"></script>
+    <script src="/static/js/app.js"></script>
 </body>
+
 </html>
