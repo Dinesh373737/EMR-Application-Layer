@@ -18,18 +18,18 @@ BASE_DIR = Path(__file__).resolve().parent
 # ---------- External Microservices ----------
 
 # Flask Data Access Service (Microservice 4)
-FHIR_BASE_URL = os.getenv("FHIR_BASE_URL", "http://localhost:5000/api/fhir")
-AUTH_BASE_URL = os.getenv("AUTH_BASE_URL", "http://localhost:5000/api/auth")
+FHIR_BASE_URL = os.getenv("FHIR_BASE_URL", "http://localhost:5004/api/fhir")
+AUTH_BASE_URL = os.getenv("AUTH_BASE_URL", "http://localhost:5004/api/auth")
 
-# Extraction Service (Microservice 1) - TODO: adjust this URL + path
+# Extraction Service (Microservice 1)
 EXTRACTION_BASE_URL = os.getenv("EXTRACTION_BASE_URL", "http://localhost:8000")
 EXTRACTION_ENDPOINT = os.getenv(
     "EXTRACTION_ENDPOINT",
-    f"{EXTRACTION_BASE_URL}/extract"  # change to the actual route used in MS-1
+    f"{EXTRACTION_BASE_URL}/extract"
 )
 
-MAPPING_ENDPOINT = "http://localhost:5005"
-ACE_ENDPOINT = "http://localhost:5001"
+MAPPING_ENDPOINT = "http://localhost:5000"  # Rohan Micro (Service 5)
+ACE_ENDPOINT = "http://localhost:8001"      # Chidanad Privacy (Service 1)
 
 TOKEN_COOKIE_NAME = "access_token"
 
@@ -149,23 +149,39 @@ async def dashboard(request: Request):
     error = None
 
     try:
+        # Use specific resource endpoint which is standard FHIR
         resp = requests.get(
-            f"{FHIR_BASE_URL}/search",
-            params={"type": "Patient", "limit": 50},
+            f"{FHIR_BASE_URL}/Patient",
+            params={"_count": 50},
             headers=build_auth_headers(token),
             timeout=5,
         )
+        # Fallback if 405 (in case data-access wasn't updated) -> Try /search
+        if resp.status_code == 405:
+             resp = requests.get(
+                f"{FHIR_BASE_URL}/search",
+                params={"type": "Patient", "limit": 50},
+                headers=build_auth_headers(token),
+                timeout=5,
+             )
+
         if resp.status_code == 200:
             body = resp.json()
-            # routes.py returns {"resources": [...], "total": ..., ...}
-            patients = body.get("resources", [])
+            if "entry" in body:
+                patients = [e["resource"] for e in body["entry"]]
+            elif "resources" in body:
+                patients = body.get("resources", [])
+            else:
+                patients = []
         else:
+            patients = []
             try:
-                error = resp.json().get("error", f"Failed to load patients (status {resp.status_code})")
-            except Exception:
-                error = f"Failed to load patients (status {resp.status_code})"
-    except Exception:
-        error = "Could not connect to Data Access Service. Is Microservice-4 running?"
+                error = resp.json().get("error", f"Error {resp.status_code}")
+            except:
+                error = f"Error {resp.status_code}"
+
+    except Exception as e:
+        error = f"Connection failed: {e}"
 
     return templates.TemplateResponse(
         "index.html",
@@ -381,31 +397,88 @@ async def upload_report(
     except Exception as e:
         error = f"Could not reach Extraction Service: {e}"
 
+    # Success - Render Review Page
+    # Save image for preview if possible
+    image_url = None
+    try:
+        if file.filename:
+            # Create static/uploads if not exists
+            upload_dir = BASE_DIR / "static" / "uploads"
+            upload_dir.mkdir(parents=True, exist_ok=True)
+            
+            # Save file
+            file_path = upload_dir / file.filename
+            with open(file_path, "wb") as f:
+                # Reset file cursor since we read it above
+                await file.seek(0)
+                f.write(await file.read())
+            
+            image_url = f"/static/uploads/{file.filename}"
+    except Exception as e:
+        print(f"Error saving preview image: {e}")
+
     return templates.TemplateResponse(
-        "upload.html",
+        "review.html",
         {
             "request": request,
-            "error": error,
-            "result_json": result_json,
-        },
+            "data": result_json,
+            "filename": file.filename,
+            "image_url": image_url
+        }
     )
 
 @app.post("/save-extracted")
-async def save_extracted(request: Request, patient_data: str = Form(...)):
+async def save_extracted(
+    request: Request, 
+    raw_json: str = Form(...),
+    pii_name: str = Form(None),
+    pii_dob: str = Form(None),
+    pii_gender: str = Form(None),
+    pii_id: str = Form(None),
+    conditions: str = Form(None),
+    medications: str = Form(None),
+    dosages: str = Form(None)
+):
 
     token = get_token(request)
     if not token and not DEV:
         return RedirectResponse(url="/login", status_code=303)
 
-    data = json.loads(patient_data)
+    # Reconstruct data from form or use raw_json
+    try:
+        data = json.loads(raw_json)
+        
+        # Overlay form updates (if user used the form fields)
+        if "PII" not in data: data["PII"] = {}
+        if pii_name: data["PII"]["Name"] = pii_name
+        if pii_dob: data["PII"]["DOB"] = pii_dob
+        if pii_gender: data["PII"]["Gender"] = pii_gender
+        if pii_id: data["PII"]["ID"] = pii_id
+        
+        if conditions:
+            # Handle user input which might be comma separated or newlines
+            data["Disease_disorder"] = [c.strip() for c in conditions.replace('\n', ',').split(',') if c.strip()]
+            
+        if medications:
+            data["Medication"] = [m.strip() for m in medications.replace('\n', ',').split(',') if m.strip()]
+            
+        if dosages:
+            data["Dosage"] = [d.strip() for d in dosages.replace('\n', ',').split(',') if d.strip()]
+
+    except json.JSONDecodeError:
+        return templates.TemplateResponse(
+            "review.html", 
+            {"request": request, "error": "Invalid JSON format in raw data", "data": {}, "image_url": None, "filename": ""}
+        )
 
     headers = build_auth_headers(token)
 
-    resp = requests.post(f'{ACE_ENDPOINT}/deidentify', headers=headers, json=data, timeout=60)
+    deidentified_resp = requests.post(f'{ACE_ENDPOINT}/deidentify', headers=headers, json=data, timeout=60)
+    deidentified_data = deidentified_resp.json()
 
     payload = {
         "document_type": data.get("Document_Type"),
-        "data": resp.json(),
+        "data": deidentified_data,
     }
     resp = requests.post(f'{MAPPING_ENDPOINT}/api/v1/map/document', headers=headers, json=payload, timeout=60)
     print(resp.json())
@@ -416,8 +489,14 @@ async def save_extracted(request: Request, patient_data: str = Form(...)):
     # Harmonize
     resp = requests.post(f'{MAPPING_ENDPOINT}/api/v1/harmonize', headers=headers, json=bundle_map, timeout=60)
     
-
     harmonized_bundle = resp.json()
+
+    # Inject Pseudonym ID from Deidentification step (Chidanad)
+    # Chidanad deidentifies "ID" in "PII" -> This is the pseudonym ID
+    pseudonym_id = deidentified_data.get("PII", {}).get("ID")
+    print(f"DEBUG: Extracted Pseudonym ID: {pseudonym_id}") # DEBUG LOG
+    if pseudonym_id:
+        harmonized_bundle["pseudonymId"] = pseudonym_id
 
     return templates.TemplateResponse(
         "harmonized.html",
