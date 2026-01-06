@@ -1,6 +1,17 @@
 {% extends "base.html" %}
 {% block title %}Patients - EMR{% endblock %}
 
+<form method="get" action="/search" class="search-bar">
+    <input
+        type="text"
+        name="disease_code"
+        placeholder="Search by ICD-10 code (e.g. I10)"
+        required
+    >
+    <button type="submit">Search</button>
+</form>
+
+
 {% block content %}
 <h1>Patient List</h1>
 

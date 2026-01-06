@@ -60,3 +60,18 @@ button {
 button:hover {
     opacity: 0.9;
 }
+
+.search-bar {
+    display: flex;
+    gap: 10px;
+    margin-bottom: 20px;
+}
+
+.search-bar input {
+    padding: 8px;
+    width: 300px;
+}
+
+.search-bar button {
+    padding: 8px 16px;
+}
