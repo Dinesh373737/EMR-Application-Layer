@@ -329,6 +329,75 @@ async def emr_summary(request: Request, patient_id: str):
 
 # ---------- Report Upload → Extraction Service ----------
 
+@app.get("/search/disease", response_class=HTMLResponse)
+async def search_by_disease(
+    request: Request,
+    icd_code: str = None
+):
+    token = get_token(request)
+    if not token and not DEV:
+        return RedirectResponse(url="/login", status_code=302)
+
+    headers = build_auth_headers(token)
+    patients = []
+    error = None
+
+    if not icd_code:
+        return templates.TemplateResponse(
+            "index.html",
+            {
+                "request": request,
+                "patients": [],
+                "error": None,
+                "query": ""
+            }
+        )
+
+    try:
+        resp = requests.get(
+            f"{FHIR_BASE_URL}/Condition",
+            params={"code": icd_code},
+            headers=headers,
+            timeout=5
+        )
+
+        if resp.status_code == 200:
+            conditions = resp.json().get("resources", [])
+
+            patient_ids = {
+                c.get("subject", {})
+                 .get("reference", "")
+                 .replace("Patient/", "")
+                for c in conditions
+            }
+
+            for pid in patient_ids:
+                p = requests.get(
+                    f"{FHIR_BASE_URL}/Patient/{pid}",
+                    headers=headers,
+                    timeout=5
+                )
+                if p.status_code == 200:
+                    patients.append(p.json())
+
+        else:
+            error = "Failed to fetch conditions"
+
+    except Exception as e:
+        error = f"Service error: {e}"
+
+    return templates.TemplateResponse(
+        "index.html",
+        {
+            "request": request,
+            "patients": patients,
+            "error": error,
+            "query": icd_code
+        }
+    )
+
+
+
 @app.get("/upload-report", response_class=HTMLResponse)
 async def upload_report_page(request: Request):
     """Show upload form for a report."""
