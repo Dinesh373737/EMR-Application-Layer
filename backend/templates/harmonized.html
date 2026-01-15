@@ -123,9 +123,10 @@
                         <span class="summary-text">
                             <!-- Dynamic Summary based on Resource Type -->
                             {% if r_type == 'Patient' %}
-                            {{ r.name[0].given[0] if r.name and r.name[0].given else '' }} {{ r.name[0].family if r.name
+                            {{ r.name[0].given|join(" ") if r.name and r.name[0].given else '' }} {{ r.name[0].family if
+                            r.name
                             else 'Unknown' }}
-                            (DOB: {{ r.birthDate }})
+                            (DOB: {{ r.birthDate if r.birthDate else 'Unknown DOB' }})
                             {% elif r_type == 'Condition' %}
                             {{ r.code.text or (r.code.coding[0].display if r.code.coding else 'Unknown Condition') }}
                             {% elif r_type == 'MedicationStatement' %}

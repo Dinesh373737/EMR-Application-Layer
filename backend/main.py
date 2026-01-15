@@ -28,8 +28,8 @@ EXTRACTION_ENDPOINT = os.getenv(
     f"{EXTRACTION_BASE_URL}/extract"
 )
 
-MAPPING_ENDPOINT = "http://localhost:5000"  # Rohan Micro (Service 5)
-ACE_ENDPOINT = "http://localhost:8001"      # Chidanad Privacy (Service 1)
+MAPPING_ENDPOINT = "http://localhost:5005"  # Rohan Micro (Service 5)
+ACE_ENDPOINT = "http://localhost:5001"      # Chidanad Privacy (Service 1)
 
 TOKEN_COOKIE_NAME = "access_token"
 
@@ -49,6 +49,101 @@ def build_auth_headers(token: str | None) -> dict:
     if not token:
         return {}
     return {"Authorization": f"Bearer {token}"}
+
+
+def reidentify_patient(patient_resource: dict):
+    """
+    Helper to call Privacy Service (ACE) to re-identify patient details.
+    """
+    if not patient_resource:
+        return patient_resource
+
+    # 1. Extract potential tokens
+    try:
+        # Name: family (last name) is often where we store the full name token if single field
+        name_token = ""
+        if "name" in patient_resource:
+             names = patient_resource["name"]
+             if isinstance(names, list) and len(names) > 0:
+                  name_token = names[0].get("family", "")
+
+        # DOB
+        dob_token = patient_resource.get("birthDate", "")
+        if not dob_token and "identifier" in patient_resource:
+            for ident in patient_resource["identifier"]:
+                if ident.get("system") == "http://privacy.service/dob-token":
+                    dob_token = ident.get("value", "")
+                    break
+
+        # ID / Pseudonym
+        # We might have injected 'pseudonymId' in DB Service response
+        pseudonym_id = patient_resource.get("pseudonymId", "")
+        
+        # If no explicit pseudonymId, maybe it's in identifier
+        if not pseudonym_id and "identifier" in patient_resource:
+            for ident in patient_resource["identifier"]:
+                 # Skip DOB token identifier
+                 if ident.get("system") == "http://privacy.service/dob-token":
+                     continue
+                 if ident.get("value"):
+                     pseudonym_id = ident.get("value")
+                     # Inject into resource for UI usage
+                     patient_resource["pseudonymId"] = pseudonym_id
+                     break
+
+        if not (name_token or dob_token or pseudonym_id):
+            return patient_resource
+            
+        # 2. Build Payload for Re-identify
+        payload = {
+            "Document_Type": "Medical Report",
+            "PII": {
+                "Name": name_token,
+                "DOB": dob_token,
+                "ID": pseudonym_id
+            }
+        }
+
+        # 3. Call Service
+        resp = requests.post(f"{ACE_ENDPOINT}/reidentify", json=payload, timeout=5)
+        
+        # DEBUG LOGGING start
+        try:
+            with open("reid_debug.log", "a") as f:
+                f.write(f"\n--- Patient ID: {patient_resource.get('id')} ---\n")
+                f.write(f"Sent Payload: {json.dumps(payload)}\n")
+                if resp.status_code == 200:
+                    f.write(f"Received Response: {json.dumps(resp.json())}\n")
+                else:
+                    f.write(f"Error Response: {resp.status_code} - {resp.text}\n")
+        except:
+            pass
+        # DEBUG LOGGING end
+
+        if resp.status_code == 200:
+            real_pii = resp.json().get("PII", {})
+            
+            # 4. Update Patient Resource
+            returned_name = real_pii.get("Name", "")
+            if returned_name and not returned_name.lower().startswith("tkn_"):
+                if "name" in patient_resource and len(patient_resource["name"]) > 0:
+                    parts = returned_name.split(" ")
+                    if len(parts) > 1:
+                         # Heuristic: Last token is family, rest is given
+                         patient_resource["name"][0]["family"] = parts[-1]
+                         patient_resource["name"][0]["given"] = parts[:-1]
+                    else:
+                         patient_resource["name"][0]["family"] = returned_name
+                         patient_resource["name"][0]["given"] = []
+
+            returned_dob = real_pii.get("DOB", "")
+            if returned_dob and not returned_dob.lower().startswith("tkn_"):
+                patient_resource["birthDate"] = returned_dob
+            
+    except Exception as e:
+        print(f"Re-identification warning: {e}")
+
+    return patient_resource
 
 
 # ---------- Root ----------
@@ -173,6 +268,10 @@ async def dashboard(request: Request):
                 patients = body.get("resources", [])
             else:
                 patients = []
+            
+            # Re-identify all patients
+            for i, p in enumerate(patients):
+                patients[i] = reidentify_patient(p)
         else:
             patients = []
             try:
@@ -213,6 +312,7 @@ async def patient_detail(request: Request, patient_id: str):
         p_resp = requests.get(f"{FHIR_BASE_URL}/Patient/{patient_id}", headers=headers, timeout=5)
         if p_resp.status_code == 200:
             patient = p_resp.json()
+            reidentify_patient(patient)
         else:
             try:
                 error = p_resp.json().get("error", f"Failed to get patient ({p_resp.status_code})")
@@ -268,36 +368,65 @@ async def emr_summary(request: Request, patient_id: str):
     error = None
 
     try:
-        # Patient details
+        # Patient details - db_service returns a Bundle with Patient + related resources
         p_resp = requests.get(
             f"{FHIR_BASE_URL}/Patient/{patient_id}",
             headers=headers,
             timeout=5
         )
         if p_resp.status_code == 200:
-            patient = p_resp.json()
+            body = p_resp.json()
+            
+            # Handle both Bundle and direct Resource responses
+            if body.get("resourceType") == "Bundle":
+                # Extract Patient and Conditions from Bundle entries
+                for entry in body.get("entry", []):
+                    res = entry.get("resource", {})
+                    res_type = res.get("resourceType")
+                    if res_type == "Patient":
+                        patient = res
+                    elif res_type == "Condition":
+                        conditions.append(res)
+                    elif res_type == "Observation":
+                        observations.append(res)
+            else:
+                # Direct resource response
+                patient = body
+            
+            if patient:
+                reidentify_patient(patient)
         else:
             error = "Unable to fetch patient details"
 
-        # Active problems (Conditions)
-        c_resp = requests.get(
-            f"{FHIR_BASE_URL}/Condition",
-            params={"patient": patient_id},
-            headers=headers,
-            timeout=5
-        )
-        if c_resp.status_code == 200:
-            conditions = c_resp.json().get("resources", [])
+        # If conditions weren't in the bundle, fetch them separately
+        if not conditions:
+            c_resp = requests.get(
+                f"{FHIR_BASE_URL}/Condition",
+                params={"patient": patient_id},
+                headers=headers,
+                timeout=5
+            )
+            if c_resp.status_code == 200:
+                c_body = c_resp.json()
+                if "entry" in c_body:
+                    conditions = [e["resource"] for e in c_body["entry"]]
+                elif "resources" in c_body:
+                    conditions = c_body.get("resources", [])
 
-        # Vitals (Observations)
-        o_resp = requests.get(
-            f"{FHIR_BASE_URL}/Observation",
-            params={"patient": patient_id},
-            headers=headers,
-            timeout=5
-        )
-        if o_resp.status_code == 200:
-            observations = o_resp.json().get("resources", [])
+        # If observations weren't in the bundle, fetch them separately
+        if not observations:
+            o_resp = requests.get(
+                f"{FHIR_BASE_URL}/Observation",
+                params={"patient": patient_id},
+                headers=headers,
+                timeout=5
+            )
+            if o_resp.status_code == 200:
+                o_body = o_resp.json()
+                if "entry" in o_body:
+                    observations = [e["resource"] for e in o_body["entry"]]
+                elif "resources" in o_body:
+                    observations = o_body.get("resources", [])
 
     except Exception as e:
         error = "Error communicating with Data Access Service"
@@ -332,7 +461,8 @@ async def emr_summary(request: Request, patient_id: str):
 @app.get("/search/disease", response_class=HTMLResponse)
 async def search_by_disease(
     request: Request,
-    icd_code: str = None
+    icd_code: str = None,
+    disease_name: str = None
 ):
     token = get_token(request)
     if not token and not DEV:
@@ -341,44 +471,70 @@ async def search_by_disease(
     headers = build_auth_headers(token)
     patients = []
     error = None
+    query = icd_code or disease_name or ""
 
-    if not icd_code:
-        return templates.TemplateResponse(
-            "index.html",
-            {
-                "request": request,
-                "patients": [],
-                "error": None,
-                "query": ""
-            }
-        )
+    # If no search query, redirect to dashboard (show all patients)
+    if not icd_code and not disease_name:
+        return RedirectResponse(url="/dashboard", status_code=302)
 
     try:
+        # Build search params - search by code or by text in code.text
+        search_term = icd_code or disease_name
+        
         resp = requests.get(
             f"{FHIR_BASE_URL}/Condition",
-            params={"code": icd_code},
             headers=headers,
             timeout=5
         )
 
         if resp.status_code == 200:
-            conditions = resp.json().get("resources", [])
+            all_conditions = resp.json().get("resources", [])
+            
+            # Filter conditions that match the search term (case-insensitive)
+            matching_conditions = []
+            search_lower = search_term.lower()
+            
+            for c in all_conditions:
+                # Check ICD code
+                codings = c.get("code", {}).get("coding", [])
+                for coding in codings:
+                    if search_lower in coding.get("code", "").lower():
+                        matching_conditions.append(c)
+                        break
+                    if search_lower in coding.get("display", "").lower():
+                        matching_conditions.append(c)
+                        break
+                else:
+                    # Check code.text (disease name)
+                    code_text = c.get("code", {}).get("text", "")
+                    if search_lower in code_text.lower():
+                        matching_conditions.append(c)
 
             patient_ids = {
                 c.get("subject", {})
                  .get("reference", "")
                  .replace("Patient/", "")
-                for c in conditions
+                for c in matching_conditions
             }
 
             for pid in patient_ids:
-                p = requests.get(
-                    f"{FHIR_BASE_URL}/Patient/{pid}",
-                    headers=headers,
-                    timeout=5
-                )
-                if p.status_code == 200:
-                    patients.append(p.json())
+                if pid:
+                    p = requests.get(
+                        f"{FHIR_BASE_URL}/Patient/{pid}",
+                        headers=headers,
+                        timeout=5
+                    )
+                    if p.status_code == 200:
+                        body = p.json()
+                        # Handle Bundle response
+                        if body.get("resourceType") == "Bundle":
+                            for entry in body.get("entry", []):
+                                res = entry.get("resource", {})
+                                if res.get("resourceType") == "Patient":
+                                    patients.append(res)
+                                    break
+                        else:
+                            patients.append(body)
 
         else:
             error = "Failed to fetch conditions"
@@ -392,7 +548,7 @@ async def search_by_disease(
             "request": request,
             "patients": patients,
             "error": error,
-            "query": icd_code
+            "query": query
         }
     )
 
@@ -520,7 +676,8 @@ async def save_extracted(
         # Overlay form updates (if user used the form fields)
         if "PII" not in data: data["PII"] = {}
         if pii_name: data["PII"]["Name"] = pii_name
-        if pii_dob: data["PII"]["DOB"] = pii_dob
+        if pii_dob: 
+            data["PII"]["DOB"] = pii_dob
         if pii_gender: data["PII"]["Gender"] = pii_gender
         if pii_id: data["PII"]["ID"] = pii_id
         
@@ -550,22 +707,54 @@ async def save_extracted(
         "data": deidentified_data,
     }
     resp = requests.post(f'{MAPPING_ENDPOINT}/api/v1/map/document', headers=headers, json=payload, timeout=60)
-    print(resp.json())
+
+    # Check mapping response
+    if resp.status_code != 200:
+        error_msg = resp.json().get("error", "Mapping failed")
+        return templates.TemplateResponse(
+            "review.html", 
+            {"request": request, "error": f"Mapping Error: {error_msg}", "data": data, "image_url": None, "filename": ""}
+        )
 
     # Map raw -> FHIR
     bundle_map = resp.json()
+    
+    # Verify it's a valid bundle before harmonizing
+    if bundle_map.get("resourceType") != "Bundle":
+        return templates.TemplateResponse(
+            "review.html", 
+            {"request": request, "error": "Mapping did not return a valid FHIR Bundle", "data": data, "image_url": None, "filename": ""}
+        )
 
     # Harmonize
     resp = requests.post(f'{MAPPING_ENDPOINT}/api/v1/harmonize', headers=headers, json=bundle_map, timeout=60)
+    
+    # Check harmonization response
+    if resp.status_code != 200:
+        error_msg = resp.json().get("error", "Harmonization failed")
+        return templates.TemplateResponse(
+            "review.html", 
+            {"request": request, "error": f"Harmonization Error: {error_msg}", "data": data, "image_url": None, "filename": ""}
+        )
     
     harmonized_bundle = resp.json()
 
     # Inject Pseudonym ID from Deidentification step (Chidanad)
     # Chidanad deidentifies "ID" in "PII" -> This is the pseudonym ID
     pseudonym_id = deidentified_data.get("PII", {}).get("ID")
-    print(f"DEBUG: Extracted Pseudonym ID: {pseudonym_id}") # DEBUG LOG
     if pseudonym_id:
         harmonized_bundle["pseudonymId"] = pseudonym_id
+
+    # Re-identify patient resource in bundle for display
+    if "entry" in harmonized_bundle:
+        for entry in harmonized_bundle["entry"]:
+            res = entry.get("resource", {})
+            if res.get("resourceType") == "Patient":
+                # Ensure it has pseudonymId if missing (helper usually looks for it in resource)
+                if pseudonym_id and "pseudonymId" not in res:
+                    res["pseudonymId"] = pseudonym_id
+                
+                reidentify_patient(res)
 
     return templates.TemplateResponse(
         "harmonized.html",

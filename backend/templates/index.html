@@ -1,54 +1,66 @@
 {% extends "base.html" %}
 {% block title %}Patients - EMR{% endblock %}
 
-<form method="get" action="/search" class="search-bar">
-    <input
-        type="text"
-        name="disease_code"
-        placeholder="Search by ICD-10 code (e.g. I10)"
-        required
-    >
-    <button type="submit">Search</button>
-</form>
-
-
 {% block content %}
 <h1>Patient List</h1>
 
+<form method="get" action="/search/disease" class="search-bar"
+    style="margin-bottom: 20px; display: flex; gap: 10px; align-items: center;">
+    <input type="text" name="disease_name" placeholder="Search by disease name or ICD-10 code (e.g. hypertension, I10)"
+        value="{{ query if query else '' }}" style="padding: 8px; width: 400px;">
+    <button type="submit" style="padding: 8px 16px;">Search</button>
+    <a href="/dashboard"
+        style="padding: 8px 16px; text-decoration: none; background: #6c757d; color: white; border-radius: 4px;">Clear
+        Filters</a>
+</form>
+
 {% if error %}
-    <div class="alert">{{ error }}</div>
+<div class="alert">{{ error }}</div>
 {% endif %}
 
 {% if patients|length == 0 %}
-    <p>No patients found.</p>
+<p>No patients found.</p>
 {% else %}
 <table class="table">
     <thead>
-    <tr>
-        <th>Patient ID</th>
-        <th>Name</th>
-        <th>Gender</th>
-        <th>Birth Date</th>
-        <th>Actions</th>
-    </tr>
+        <tr>
+            <th>Patient ID</th>
+            <th>Name</th>
+            <th>Gender</th>
+            <th>Birth Date</th>
+            <th>Actions</th>
+        </tr>
     </thead>
     <tbody>
-    {% for p in patients %}
+        {% for p in patients %}
         <tr>
             <td>{{ p.id }}</td>
             <td>
-                {% if p.name %}
-                    {{ p.name[0].given[0] if p.name[0].given else "" }}
-                    {{ p.name[0].family if p.name[0].family else "" }}
+                {% if p.name and p.name[0] %}
+                {% set family = p.name[0].family if p.name[0].family and not p.name[0].family.lower().startswith('tkn_')
+                else "" %}
+                {% set given_list = p.name[0].given if p.name[0].given else [] %}
+                {% set given = given_list|select("ne", "")|reject("match", "^(?i)Tkn_")|list|join(" ") %}
+                {% set full_name = (given ~ " " ~ family)|trim %}
+
+                {% if full_name %}
+                {{ full_name }}
+                {% elif p.pseudonymId %}
+                {{ p.pseudonymId }}
                 {% else %}
-                    -
+                Unknown
+                {% endif %}
+                {% elif p.pseudonymId %}
+                {{ p.pseudonymId }}
+                {% else %}
+                -
                 {% endif %}
             </td>
             <td>{{ p.gender if p.gender else "-" }}</td>
             <td>{{ p.birthDate if p.birthDate else "-" }}</td>
             <td><a href="/emr/{{ p.id }}">View EMR</a></td>
         </tr>
-    {% endfor %}
+        {% endfor %}
     </tbody>
 </table>
 {% endif %}

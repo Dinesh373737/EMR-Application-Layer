@@ -11,11 +11,21 @@
 <!-- ================= PATIENT HEADER ================= -->
 <div class="card">
     <h1>
-        {% if patient.name and patient.name[0] and patient.name[0].text %}
-        {{ patient.name[0].text }}
-        {% elif patient.name and patient.name[0] %}
-        {{ patient.name[0].given[0] if patient.name[0].given else "" }} {{ patient.name[0].family if
-        patient.name[0].family else "" }}
+        {% set display_name = "" %}
+        {% if patient.name and patient.name[0] %}
+        {% if patient.name[0].text and not patient.name[0].text.lower().startswith('tkn_') %}
+        {% set display_name = patient.name[0].text %}
+        {% elif patient.name[0].family and not patient.name[0].family.lower().startswith('tkn_') %}
+        {% set given = patient.name[0].given[0] if patient.name[0].given and not
+        patient.name[0].given[0].lower().startswith('tkn_') else "" %}
+        {% set display_name = (given ~ " " ~ patient.name[0].family)|trim %}
+        {% endif %}
+        {% endif %}
+
+        {% if display_name %}
+        {{ display_name }}
+        {% elif patient.pseudonymId %}
+        {{ patient.pseudonymId }}
         {% else %}
         Unknown Patient
         {% endif %}
@@ -50,41 +60,6 @@
     {% else %}
     <p>No active problems recorded</p>
     {% endif %}
-</div>
-
-<!-- ================= VITALS SUMMARY ================= -->
-<div class="card">
-    <h2>Vitals</h2>
-
-    {% set vitals = {
-    "Blood Pressure": "NA",
-    "Pulse": "NA",
-    "Temperature": "NA",
-    "Weight": "NA"
-    } %}
-
-    {% for obs in observations %}
-    {% if obs.code.text %}
-    {% if "pressure" in obs.code.text|lower %}
-    {% set _ = vitals.update({"Blood Pressure": obs.valueQuantity.value}) %}
-    {% elif "pulse" in obs.code.text|lower %}
-    {% set _ = vitals.update({"Pulse": obs.valueQuantity.value}) %}
-    {% elif "temp" in obs.code.text|lower %}
-    {% set _ = vitals.update({"Temperature": obs.valueQuantity.value}) %}
-    {% elif "weight" in obs.code.text|lower %}
-    {% set _ = vitals.update({"Weight": obs.valueQuantity.value}) %}
-    {% endif %}
-    {% endif %}
-    {% endfor %}
-
-    <table>
-        {% for key, value in vitals.items() %}
-        <tr>
-            <th>{{ key }}</th>
-            <td>{{ value }}</td>
-        </tr>
-        {% endfor %}
-    </table>
 </div>
 
 <!-- ================= TIMELINE ================= -->
