@@ -1,8 +1,9 @@
-venv/
+.venv/
 __pycache__/
 *.pyc
 .env
 .DS_Store
+reid_debug.log
 
 # Ignore uploads
 backend/static/uploads/

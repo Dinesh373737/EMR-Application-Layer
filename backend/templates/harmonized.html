@@ -164,15 +164,28 @@
         </div>
         {% endif %}
 
-        <!-- Action Buttons -->
-        <div style="margin-top: 30px; display: flex; gap: 15px; justify-content: flex-end;">
-            <a href="/upload-report" class="btn secondary-btn">Cancel & Return</a>
+        <!-- Final Payload Review & Edit -->
+        <div style="margin-top: 30px; border-top: 2px solid #f1f1f1; padding-top: 20px;">
+            <h3>Step 3: Confirm Final Payload</h3>
+            <p style="color: #666; font-size: 0.9em; margin-bottom: 15px;">
+                Review the final FHIR Bundle below. This is what will be saved to the server.
+                <strong>Ensure PII (Name, DOB) is tokenized (TKN_...)</strong> before saving.
+            </p>
 
             <form action="/confirm-save" method="post" style="margin:0;">
-                <input type="hidden" name="fhir_bundle" value='{{ bundle | tojson }}'>
-                <button type="submit" class="primary-btn" style="background-color: #28a745;">
-                    ✓ Confirm & Save to FHIR Server
-                </button>
+                <textarea name="fhir_bundle"
+                    style="width: 100%; height: 300px; font-family: monospace; font-size: 13px; padding: 15px; border: 1px solid #ccc; border-radius: 4px; background-color: #fafafa; margin-bottom: 20px; resize: vertical;"
+                    spellcheck="false" readonly>{{ bundle | tojson(indent=2) }}</textarea>
+
+                <div style="display: flex; gap: 15px; justify-content: flex-end;">
+                    <a href="/upload-report" class="btn secondary-btn"
+                        style="text-decoration: none; padding: 10px 20px; border: 1px solid #ddd; border-radius: 4px; color: #333;">Cancel
+                        & Return</a>
+                    <button type="submit" class="primary-btn"
+                        style="background-color: #28a745; color: white; border: none; padding: 10px 20px; border-radius: 4px; cursor: pointer; font-weight: bold;">
+                        ✓ Confirm & Save to FHIR Server
+                    </button>
+                </div>
             </form>
         </div>
     </div>
