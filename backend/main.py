@@ -37,6 +37,15 @@ TOKEN_COOKIE_NAME = "access_token"
 templates = Jinja2Templates(directory=str(BASE_DIR / "templates"))
 app.mount("/static", StaticFiles(directory=str(BASE_DIR / "static")), name="static")
 
+# Add 'match' test for regex filtering in templates
+import re
+def filter_match(value, pattern):
+    if not isinstance(value, str):
+        return False
+    return bool(re.search(pattern, value, re.IGNORECASE))
+
+templates.env.tests["match"] = filter_match
+
 
 # ---------- Helper Functions ----------
 
@@ -65,7 +74,23 @@ def reidentify_patient(patient_resource: dict):
         if "name" in patient_resource:
              names = patient_resource["name"]
              if isinstance(names, list) and len(names) > 0:
-                  name_token = names[0].get("family", "")
+                  # Check family
+                  fam = names[0].get("family", "")
+                  if fam and fam.lower().startswith("tkn_"):
+                      name_token = fam
+                  
+                  # Check given
+                  if not name_token and "given" in names[0]:
+                      for g in names[0]["given"]:
+                          if g and g.lower().startswith("tkn_"):
+                              name_token = g
+                              break
+                  
+                  # Check text
+                  if not name_token and "text" in names[0]:
+                      txt = names[0]["text"]
+                      if txt and txt.lower().startswith("tkn_"):
+                          name_token = txt
 
         # DOB
         dob_token = patient_resource.get("birthDate", "")
@@ -272,6 +297,7 @@ async def dashboard(request: Request):
             # Re-identify all patients
             for i, p in enumerate(patients):
                 patients[i] = reidentify_patient(p)
+            # print(patients)
         else:
             patients = []
             try:
@@ -662,7 +688,13 @@ async def save_extracted(
     pii_id: str = Form(None),
     conditions: str = Form(None),
     medications: str = Form(None),
-    dosages: str = Form(None)
+    dosages: str = Form(None),
+    doctor: str = Form(None),
+    department: str = Form(None),
+    admission_reason: str = Form(None),
+    outcome: str = Form(None),
+    procedures: str = Form(None),
+    instructions: str = Form(None)
 ):
 
     token = get_token(request)
@@ -681,8 +713,14 @@ async def save_extracted(
         if pii_gender: data["PII"]["Gender"] = pii_gender
         if pii_id: data["PII"]["ID"] = pii_id
         
+        # Simple text fields
+        if doctor: data["Doctor"] = doctor
+        if department: data["Department"] = department
+        if admission_reason: data["Admission_Reason"] = admission_reason
+        if outcome: data["Outcome"] = outcome
+
+        # List fields (comma or newline separated)
         if conditions:
-            # Handle user input which might be comma separated or newlines
             data["Disease_disorder"] = [c.strip() for c in conditions.replace('\n', ',').split(',') if c.strip()]
             
         if medications:
@@ -690,6 +728,13 @@ async def save_extracted(
             
         if dosages:
             data["Dosage"] = [d.strip() for d in dosages.replace('\n', ',').split(',') if d.strip()]
+
+        if procedures:
+            data["Procedure"] = [p.strip() for p in procedures.replace('\n', ',').split(',') if p.strip()]
+
+        if instructions:
+            # Instructions are better split by newline
+            data["Instructions"] = [i.strip() for i in instructions.split('\n') if i.strip()]
 
     except json.JSONDecodeError:
         return templates.TemplateResponse(
@@ -745,16 +790,19 @@ async def save_extracted(
     if pseudonym_id:
         harmonized_bundle["pseudonymId"] = pseudonym_id
 
-    # Re-identify patient resource in bundle for display
-    if "entry" in harmonized_bundle:
-        for entry in harmonized_bundle["entry"]:
-            res = entry.get("resource", {})
-            if res.get("resourceType") == "Patient":
-                # Ensure it has pseudonymId if missing (helper usually looks for it in resource)
-                if pseudonym_id and "pseudonymId" not in res:
-                    res["pseudonymId"] = pseudonym_id
-                
-                reidentify_patient(res)
+    # DO NOT re-identify here. The user needs to verify the DE-IDENTIFIED bundle before saving.
+    # If we re-identify here, we risk saving clear text PII to the FHIR store.
+    # The dashboard will handle re-identification for display.
+    
+    # if "entry" in harmonized_bundle:
+    #     for entry in harmonized_bundle["entry"]:
+    #         res = entry.get("resource", {})
+    #         if res.get("resourceType") == "Patient":
+    #             # Ensure it has pseudonymId if missing (helper usually looks for it in resource)
+    #             if pseudonym_id and "pseudonymId" not in res:
+    #                 res["pseudonymId"] = pseudonym_id
+    #             
+    #             reidentify_patient(res)
 
     return templates.TemplateResponse(
         "harmonized.html",
