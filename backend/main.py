@@ -80,17 +80,10 @@ def reidentify_patient(patient_resource: dict):
                       name_token = fam
                   
                   # Check given
-                  if not name_token and "given" in names[0]:
-                      for g in names[0]["given"]:
-                          if g and g.lower().startswith("tkn_"):
-                              name_token = g
-                              break
-                  
-                  # Check text
-                  if not name_token and "text" in names[0]:
-                      txt = names[0]["text"]
-                      if txt and txt.lower().startswith("tkn_"):
-                          name_token = txt
+                  family_token = names[0].get("family", "")
+                  given_list = names[0].get("given", [])
+                  if given_list and len(given_list) > 0:
+                      given_token = given_list[0]
 
         # DOB
         dob_token = patient_resource.get("birthDate", "")
@@ -99,31 +92,28 @@ def reidentify_patient(patient_resource: dict):
                 if ident.get("system") == "http://privacy.service/dob-token":
                     dob_token = ident.get("value", "")
                     break
-
-        # ID / Pseudonym
-        # We might have injected 'pseudonymId' in DB Service response
-        pseudonym_id = patient_resource.get("pseudonymId", "")
         
-        # If no explicit pseudonymId, maybe it's in identifier
+        # ID / Pseudonym
+        pseudonym_id = patient_resource.get("pseudonymId", "")
+        # ... (keep existing ID logic if needed, but usually pseudonymId is enough)
         if not pseudonym_id and "identifier" in patient_resource:
-            for ident in patient_resource["identifier"]:
-                 # Skip DOB token identifier
-                 if ident.get("system") == "http://privacy.service/dob-token":
-                     continue
-                 if ident.get("value"):
-                     pseudonym_id = ident.get("value")
-                     # Inject into resource for UI usage
-                     patient_resource["pseudonymId"] = pseudonym_id
-                     break
+             for ident in patient_resource["identifier"]:
+                  if ident.get("system") == "http://privacy.service/dob-token": continue
+                  if ident.get("value"):
+                       pseudonym_id = ident.get("value")
+                       patient_resource["pseudonymId"] = pseudonym_id
+                       break
 
-        if not (name_token or dob_token or pseudonym_id):
+        if not (family_token or given_token or dob_token or pseudonym_id):
             return patient_resource
             
         # 2. Build Payload for Re-identify
         payload = {
             "Document_Type": "Medical Report",
             "PII": {
-                "Name": name_token,
+                "GivenName": given_token,
+                "FamilyName": family_token,
+                "Name": family_token, # Legacy fallback support
                 "DOB": dob_token,
                 "ID": pseudonym_id
             }
@@ -149,17 +139,36 @@ def reidentify_patient(patient_resource: dict):
             real_pii = resp.json().get("PII", {})
             
             # 4. Update Patient Resource
+            # 4. Update Patient Resource
+            returned_given = real_pii.get("GivenName", "")
+            returned_family = real_pii.get("FamilyName", "")
+            
+            # Legacy fallback
             returned_name = real_pii.get("Name", "")
-            if returned_name and not returned_name.lower().startswith("tkn_"):
-                if "name" in patient_resource and len(patient_resource["name"]) > 0:
-                    parts = returned_name.split(" ")
-                    if len(parts) > 1:
-                         # Heuristic: Last token is family, rest is given
-                         patient_resource["name"][0]["family"] = parts[-1]
-                         patient_resource["name"][0]["given"] = parts[:-1]
-                    else:
-                         patient_resource["name"][0]["family"] = returned_name
-                         patient_resource["name"][0]["given"] = []
+            
+            if "name" not in patient_resource:
+                 patient_resource["name"] = [{"family": "", "given": []}]
+            
+            if len(patient_resource["name"]) == 0:
+                 patient_resource["name"].append({"family": "", "given": []})
+
+            name_entry = patient_resource["name"][0]
+            
+            if returned_family and not returned_family.lower().startswith("tkn_"):
+                name_entry["family"] = returned_family
+            
+            if returned_given and not returned_given.lower().startswith("tkn_"):
+                 # Assuming single given name for now
+                 name_entry["given"] = [returned_given]
+
+            # Fallback for legacy data
+            if (not returned_family and not returned_given) and returned_name and not returned_name.lower().startswith("tkn_"):
+                 parts = returned_name.split(" ")
+                 if len(parts) > 1:
+                      name_entry["family"] = parts[-1]
+                      name_entry["given"] = parts[:-1]
+                 else:
+                      name_entry["family"] = returned_name
 
             returned_dob = real_pii.get("DOB", "")
             if returned_dob and not returned_dob.lower().startswith("tkn_"):
@@ -484,29 +493,92 @@ async def emr_summary(request: Request, patient_id: str):
 
 # ---------- Report Upload → Extraction Service ----------
 
-@app.get("/search/disease", response_class=HTMLResponse)
-async def search_by_disease(
+@app.get("/search", response_class=HTMLResponse)
+async def global_search(
     request: Request,
-    icd_code: str = None,
-    disease_name: str = None
+    query: str = None
 ):
     token = get_token(request)
     if not token and not DEV:
         return RedirectResponse(url="/login", status_code=302)
 
     headers = build_auth_headers(token)
-    patients = []
+    patients_map = {} # Use dict to deduplicate by ID
     error = None
-    query = icd_code or disease_name or ""
-
-    # If no search query, redirect to dashboard (show all patients)
-    if not icd_code and not disease_name:
+    
+    if not query:
         return RedirectResponse(url="/dashboard", status_code=302)
 
     try:
-        # Build search params - search by code or by text in code.text
-        search_term = icd_code or disease_name
+        search_lower = query.lower()
+
+        # --- 1. SEARCH BY NAME (Tokenized) ---
+        # Get token for the query string to search in DB
+        # We need to ask ACE to tokenize the query.
         
+        # Split query into potential name parts
+        # Try multiple casings to ensure we match how it was stored (e.g. "Rahul" vs "rahul")
+        variations = {query, query.lower(), query.title()}
+        parts = query.split()
+        if len(parts) > 1:
+            for part in parts:
+                variations.add(part)
+                variations.add(part.lower())
+                variations.add(part.title())
+        
+        phrases_to_tokenize = list(variations)
+        
+        search_tokens = set()
+        
+        for phrase in phrases_to_tokenize:
+            if not phrase.strip(): continue
+            try:
+                 deid_resp = requests.post(
+                     f"{ACE_BASE_URL}/deidentify",
+                     json={
+                         "Document_Type": "Medical Report",
+                         "PII": {"GivenName": phrase} 
+                     },
+                     timeout=2
+                 )
+                 if deid_resp.status_code == 200:
+                      tok = deid_resp.json().get("PII", {}).get("GivenName")
+                      if tok:
+                          search_tokens.add(tok)
+            except Exception as e:
+                print(f"Error getting token for phrase '{phrase}': {e}")
+
+        # Fetch all patients to filter
+        if search_tokens:
+            p_resp = requests.get(
+                f"{FHIR_BASE_URL}/Patient",
+                params={"_count": 1000}, # Fetch enough to scan
+                headers=headers,
+                timeout=5
+            )
+            
+            if p_resp.status_code == 200:
+                all_patients = p_resp.json().get("resources", [])
+                for p in all_patients:
+                    matched = False
+                    
+                    # Collect patient tokens
+                    p_tokens = set()
+                    if "name" in p:
+                        for n in p["name"]:
+                            if n.get("family"): p_tokens.add(n["family"])
+                            p_tokens.update(n.get("given", []))
+                            if n.get("text"): p_tokens.add(n["text"])
+                    
+                    # Check intersection
+                    if not search_tokens.isdisjoint(p_tokens):
+                        matched = True
+                    
+                    # If matched by token
+                    if matched:
+                        patients_map[p["id"]] = p
+
+        # --- 2. SEARCH BY DISEASE (Existing Logic) ---
         resp = requests.get(
             f"{FHIR_BASE_URL}/Condition",
             headers=headers,
@@ -515,10 +587,7 @@ async def search_by_disease(
 
         if resp.status_code == 200:
             all_conditions = resp.json().get("resources", [])
-            
-            # Filter conditions that match the search term (case-insensitive)
             matching_conditions = []
-            search_lower = search_term.lower()
             
             for c in all_conditions:
                 # Check ICD code
@@ -536,15 +605,16 @@ async def search_by_disease(
                     if search_lower in code_text.lower():
                         matching_conditions.append(c)
 
-            patient_ids = {
+            patient_ids_from_cond = {
                 c.get("subject", {})
                  .get("reference", "")
                  .replace("Patient/", "")
                 for c in matching_conditions
             }
-
-            for pid in patient_ids:
-                if pid:
+            
+            for pid in patient_ids_from_cond:
+                if pid and pid not in patients_map:
+                     # Fetch if not already found via name
                     p = requests.get(
                         f"{FHIR_BASE_URL}/Patient/{pid}",
                         headers=headers,
@@ -552,18 +622,20 @@ async def search_by_disease(
                     )
                     if p.status_code == 200:
                         body = p.json()
-                        # Handle Bundle response
                         if body.get("resourceType") == "Bundle":
                             for entry in body.get("entry", []):
                                 res = entry.get("resource", {})
                                 if res.get("resourceType") == "Patient":
-                                    patients.append(res)
+                                    patients_map[res["id"]] = res
                                     break
                         else:
-                            patients.append(body)
+                             patients_map[body["id"]] = body
 
-        else:
-            error = "Failed to fetch conditions"
+        patients = list(patients_map.values())
+        
+        # Re-identify all found patients
+        for i, p in enumerate(patients):
+            reidentify_patient(p)
 
     except Exception as e:
         error = f"Service error: {e}"
@@ -682,7 +754,8 @@ async def upload_report(
 async def save_extracted(
     request: Request, 
     raw_json: str = Form(...),
-    pii_name: str = Form(None),
+    pii_given_name: str = Form(None),
+    pii_family_name: str = Form(None),
     pii_dob: str = Form(None),
     pii_gender: str = Form(None),
     pii_id: str = Form(None),
@@ -707,7 +780,10 @@ async def save_extracted(
         
         # Overlay form updates (if user used the form fields)
         if "PII" not in data: data["PII"] = {}
-        if pii_name: data["PII"]["Name"] = pii_name
+        # Overlay form updates (if user used the form fields)
+        if "PII" not in data: data["PII"] = {}
+        if pii_given_name: data["PII"]["GivenName"] = pii_given_name
+        if pii_family_name: data["PII"]["FamilyName"] = pii_family_name
         if pii_dob: 
             data["PII"]["DOB"] = pii_dob
         if pii_gender: data["PII"]["Gender"] = pii_gender
@@ -844,7 +920,8 @@ async def confirm_save(request: Request, fhir_bundle: str = Form(...)):
                 "success.html",
                 {
                     "request": request,
-                    "message": "Medical records confirmed and saved successfully!"
+                    "message": "Medical records confirmed and saved successfully!",
+                    "pii": result_json.get("PII", {}) if result_json else {}
                 }
             )
         else:

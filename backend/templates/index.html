@@ -7,11 +7,10 @@
 </div>
 
 <div class="card" style="margin-bottom: 2rem;">
-    <form method="get" action="/search/disease" class="search-bar"
+    <form method="get" action="/search" class="search-bar"
         style="border: none; box-shadow: none; margin: 0; padding: 0;">
-        <input type="text" name="disease_name"
-            placeholder="Search by disease name or ICD-10 code (e.g. hypertension, I10)"
-            value="{{ query if query else '' }}" aria-label="Search patients">
+        <input type="text" name="query" placeholder="Search by patient name, disease, or ICD-10 code"
+            value="{{ query if query else '' }}" aria-label="Search">
         <button type="submit">Search</button>
         <a href="/dashboard" class="btn btn-secondary" style="font-size: 0.95rem;">Clear Filters</a>
     </form>

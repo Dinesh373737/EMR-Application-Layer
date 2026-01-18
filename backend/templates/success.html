@@ -10,6 +10,30 @@
         <p style="font-size: 1.2em; color: #555; margin-bottom: 30px;">
             {{ message }}
         </p>
+
+        {% if pii %}
+        <div style="background: #f8f9fa; padding: 1rem; border-radius: 8px; text-align: left; margin-bottom: 1.5rem;">
+            <h3>Patient Details Saved:</h3>
+            <div class="row">
+                <div class="col">
+                    <strong>Given Name:</strong>
+                    <div>{{ pii.GivenName }}</div>
+                </div>
+                <div class="col">
+                    <strong>Family Name:</strong>
+                    <div>{{ pii.FamilyName }}</div>
+                </div>
+            </div>
+            {% if pii.Name and not pii.GivenName and not pii.FamilyName %}
+            <div class="row" style="margin-top: 1rem;">
+                <div class="col">
+                    <strong>Name:</strong>
+                    <div>{{ pii.Name }}</div>
+                </div>
+            </div>
+            {% endif %}
+        </div>
+        {% endif %}
         <a href="/dashboard" class="primary-btn">Go to Dashboard</a>
     </div>
 </div>
