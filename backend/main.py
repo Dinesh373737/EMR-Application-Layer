@@ -1,8 +1,16 @@
 from pathlib import Path
 import os
 import json
+import jwt
 
+import os
 import requests
+import google.generativeai as genai
+from dotenv import load_dotenv
+
+# Load environment variables
+load_dotenv()
+
 from fastapi import FastAPI, Request, Form, UploadFile, File
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
@@ -10,7 +18,7 @@ from fastapi.templating import Jinja2Templates
 
 app = FastAPI()
 
-DEV = True
+DEV = False
 
 # ---------- Paths ----------
 BASE_DIR = Path(__file__).resolve().parent
@@ -31,7 +39,10 @@ EXTRACTION_ENDPOINT = os.getenv(
 MAPPING_ENDPOINT = "http://localhost:5005"  # Rohan Micro (Service 5)
 ACE_ENDPOINT = "http://localhost:5001"      # Chidanad Privacy (Service 1)
 
+import hashlib
 TOKEN_COOKIE_NAME = "access_token"
+SECRET_KEY = "emr-secure-key-2025"
+print(f"DEBUG: App Service Secret Key SHA256: {hashlib.sha256(SECRET_KEY.encode()).hexdigest()}")
 
 # ---------- Templates & Static ----------
 templates = Jinja2Templates(directory=str(BASE_DIR / "templates"))
@@ -46,18 +57,32 @@ def filter_match(value, pattern):
 
 templates.env.tests["match"] = filter_match
 
-
 # ---------- Helper Functions ----------
 
 def get_token(request: Request) -> str | None:
     """Read JWT access token from cookies."""
-    return request.cookies.get(TOKEN_COOKIE_NAME)
+    token = request.cookies.get(TOKEN_COOKIE_NAME)
+    if not token:
+        print("DEBUG: No token in cookies")
+    return token
 
 
 def build_auth_headers(token: str | None) -> dict:
     if not token:
         return {}
     return {"Authorization": f"Bearer {token}"}
+
+
+def get_current_user(request: Request) -> dict | None:
+    token = get_token(request)
+    if not token:
+        return None
+    try:
+        payload = jwt.decode(token, SECRET_KEY, algorithms=["HS256"])
+        return payload
+    except Exception as e:
+        print(f"DEBUG: Token decode failed: {e}")
+        return None
 
 
 def reidentify_patient(patient_resource: dict):
@@ -202,77 +227,162 @@ async def login_page(request: Request):
 
 
 @app.post("/login", response_class=HTMLResponse)
-async def login_submit(
+async def login_post(
     request: Request,
     username: str = Form(...),
     password: str = Form(...)
 ):
-    """Send credentials to Microservice-4 /api/auth/login."""
     try:
         resp = requests.post(
             f"{AUTH_BASE_URL}/login",
             json={"username": username, "password": password},
             timeout=5
         )
-    except Exception:
-        # Data Service not reachable
-        return templates.TemplateResponse(
-            "login.html",
-            {
-                "request": request,
-                "error": "Cannot reach Data Access Service. Please check if Microservice-4 is running.",
-            },
-            status_code=500,
-        )
+        
+        if resp.status_code == 200:
+            data = resp.json()
+            token = data.get("token")
+            response = RedirectResponse(url="/dashboard", status_code=302)
+            response.set_cookie(
+                key=TOKEN_COOKIE_NAME,
+                value=token,
+                httponly=True,
+                max_age=86400  # 1 day
+            )
+            return response
+        else:
+            try:
+                error = resp.json().get("error", "Invalid credentials")
+            except Exception:
+                # Fallback if response is not JSON (e.g. 500 HTML page)
+                error = f"Login failed ({resp.status_code}): {resp.text[:200]}"
+            
+    except Exception as e:
+        error = f"Login service unavailable: {e}"
 
-    if resp.status_code != 200:
-        # Invalid credentials or error
-        try:
-            msg = resp.json().get("error", "Login failed")
-        except Exception:
-            msg = "Login failed"
-        return templates.TemplateResponse(
-            "login.html",
-            {"request": request, "error": msg},
-            status_code=resp.status_code,
-        )
-
-    data = resp.json()
-    token = data.get("tokens", {}).get("access")
-
-    if not token:
-        return templates.TemplateResponse(
-            "login.html",
-            {"request": request, "error": "No access token received from auth service."},
-            status_code=500,
-        )
-
-    # Set token in cookie and redirect to dashboard
-    response = RedirectResponse(url="/dashboard", status_code=302)
-    response.set_cookie(
-        key=TOKEN_COOKIE_NAME,
-        value=token,
-        httponly=True,  # JS cannot read (better security)
-        max_age=60 * 60 * 4,  # 4 hours
+    return templates.TemplateResponse(
+        "login.html",
+        {"request": request, "error": error}
     )
-    return response
 
 
 @app.get("/logout")
 async def logout(request: Request):
-    """Clear cookie and go to login page."""
     response = RedirectResponse(url="/login", status_code=302)
-    response.delete_cookie(TOKEN_COOKIE_NAME)
+    response.delete_cookie(TOKEN_COOKIE_NAME, path="/")
     return response
+
+
+# ---------- Admin Routes ----------
+
+@app.get("/admin", response_class=HTMLResponse)
+async def admin_dashboard(request: Request):
+    user = get_current_user(request)
+    if not user or user.get("role") != "admin":
+        return RedirectResponse(url="/dashboard", status_code=302)
+        
+    users = []
+    error = None
+    try:
+        token = get_token(request)
+        headers = build_auth_headers(token)
+        resp = requests.get(f"{AUTH_BASE_URL}/users", headers=headers, timeout=5)
+        if resp.status_code == 200:
+            users = resp.json()
+        else:
+            error = "Failed to fetch users"
+    except Exception as e:
+        error = f"Error: {e}"
+
+    return templates.TemplateResponse(
+        "admin.html",
+        {"request": request, "users": users, "error": error}
+    )
+
+@app.post("/admin/create-user", response_class=HTMLResponse)
+async def create_user(
+    request: Request,
+    username: str = Form(...),
+    password: str = Form(...),
+    role: str = Form(...),
+    can_upload: bool = Form(False)
+):
+    user = get_current_user(request)
+    if not user or user.get("role") != "admin":
+        return RedirectResponse(url="/dashboard", status_code=302)
+
+    try:
+        token = get_token(request)
+        headers = build_auth_headers(token)
+        payload = {
+            "username": username,
+            "password": password,
+            "role": role,
+            "can_upload": can_upload
+        }
+        
+        resp = requests.post(
+            f"{AUTH_BASE_URL}/users",
+            json=payload,
+            headers=headers,
+            timeout=5
+        )
+        
+        if resp.status_code == 201:
+            return RedirectResponse(url="/admin", status_code=302)
+        else:
+            error = resp.json().get("error", "Failed to create user")
+            
+    except Exception as e:
+        error = f"Error: {e}"
+
+    # Verify if we need to pass existing users back on error or redirect
+    return RedirectResponse(url=f"/admin?error={error}", status_code=302)
+
+@app.post("/admin/delete-user")
+async def delete_user(request: Request, user_id: int = Form(...)):
+    user = get_current_user(request)
+    if not user or user.get("role") != "admin":
+         return RedirectResponse(url="/dashboard", status_code=302)
+         
+    try:
+        token = get_token(request)
+        headers = build_auth_headers(token)
+        
+        # Check if target user is 'admin'
+        # We need to fetch the user list or specific user to check username. 
+        # Since we only have ID, let's fetch list. Ideally we'd have GET /users/{id}
+        # But 'admin' usually has ID 1 or we can forbid ID 1 blindly? 
+        # Better: Fetch user by ID if endpoint exists, or just forbid ID 1 as standard.
+        # Let's assume ID 1 is the main admin as seeded.
+        if user_id == 1:
+             return RedirectResponse(url="/admin?error=Cannot delete main admin", status_code=302)
+
+        requests.delete(f"{AUTH_BASE_URL}/users/{user_id}", headers=headers)
+    except:
+        pass
+        
+    return RedirectResponse(url="/admin", status_code=302)
+
+# ---------- Dashboard ----------
+
+
 
 
 # ---------- Dashboard: Patient List ----------
 
 @app.get("/dashboard", response_class=HTMLResponse)
+
 async def dashboard(request: Request):
-    token = get_token(request)
-    if not token and not DEV:
+    current_user_obj = get_current_user(request)
+    print(f"DEBUG: Dashboard User: {current_user_obj}")
+    if not current_user_obj and not DEV:
         return RedirectResponse(url="/login", status_code=302)
+    
+    token = get_token(request)
+    
+    # We already have user, we can pass it down later
+    # ... logic continues ...
 
     patients = []
     error = None
@@ -323,6 +433,8 @@ async def dashboard(request: Request):
             "request": request,
             "patients": patients,
             "error": error,
+            "query": None,
+            "user": current_user_obj
         },
     )
 
@@ -464,7 +576,82 @@ async def emr_summary(request: Request, patient_id: str):
                     observations = o_body.get("resources", [])
 
     except Exception as e:
-        error = "Error communicating with Data Access Service"
+        error = f"Error communicating with Data Access Service: {e}"
+
+    # --- Generate Timeline Events ---
+    timeline_events = []
+    
+    for c in conditions:
+        # Try to find a date
+        date_str = c.get("onsetDateTime") or c.get("recordedDate") or "Unknown Date"
+        status = c.get("clinicalStatus", {}).get("coding", [{}])[0].get("code", "active")
+        
+        # Robust Title Extraction: Prefer Coding Display, then Text
+        code_obj = c.get("code", {})
+        title = "Unknown Condition"
+        
+        # 1. Try standardized coding display (best source)
+        codings = code_obj.get("coding", [])
+        if codings and codings[0].get("display"):
+             title = codings[0].get("display")
+        # 2. Fallback to free text if reasonable
+        elif code_obj.get("text"):
+             title = code_obj.get("text")
+        # 3. Fallback to raw code
+        elif codings and codings[0].get("code"):
+             title = f"Condition Code: {codings[0].get('code')}"
+
+        timeline_events.append({
+            "type": "Condition",
+            "date": date_str,
+            "display_date": date_str[:10] if len(date_str) >= 10 else date_str,
+            "title": title,
+            "details": f"Status: {status}",
+            "icon": "🩺", # Stethoscope
+            "color": "#e3f2fd", # Light Blue
+            "text_color": "#0d47a1"
+        })
+
+    for o in observations:
+        date_str = o.get("effectiveDateTime") or o.get("issued") or "Unknown Date"
+        
+        val = "N/A"
+        if "valueQuantity" in o:
+             q = o["valueQuantity"]
+             val = f"{q.get('value')} {q.get('unit', '')}"
+        elif "valueString" in o:
+             val = o["valueString"]
+        elif "component" in o:
+            # BP is often components
+            comps = []
+            for comp in o["component"]:
+                code = comp.get("code", {}).get("text", "")
+                q = comp.get("valueQuantity", {})
+                v = f"{q.get('value', '')}{q.get('unit', '')}"
+                comps.append(f"{code}: {v}")
+            val = ", ".join(comps)
+
+        timeline_events.append({
+            "type": "Observation",
+            "date": date_str,
+            "display_date": date_str[:10] if len(date_str) >= 10 else date_str,
+            "title": o.get("code", {}).get("text", "Unknown Observation"),
+            "details": f"Value: {val}",
+            "icon": "🔬", # Microscope
+            "color": "#f3e5f5", # Light Purple
+            "text_color": "#4a148c"
+        })
+
+    # Sort descending (newest first)
+    timeline_events.sort(key=lambda x: x["date"] if x["date"] != "Unknown Date" else "0000", reverse=True)
+    
+    # Fix display dates after sorting
+    for t in timeline_events:
+        if t["date"] == "Unknown Date":
+            t["display_date"] = "Date Not Recorded"
+        else:
+            # Try to format nice date YYYY-MM-DD
+            t["display_date"] = t["date"][:10]
 
     return templates.TemplateResponse(
         "emr_summary.html",
@@ -473,34 +660,156 @@ async def emr_summary(request: Request, patient_id: str):
             "patient": patient,
             "conditions": conditions,
             "observations": observations,
+            "timeline": timeline_events,
             "error": error
         }
     )
 
-    # ---------------- RENDER TEMPLATE ----------------
+@app.get("/api/emr/{patient_id}/graph")
+def get_patient_graph(request: Request, patient_id: str):
+    # Fetch data (re-using logic or making fresh calls)
+    # Ideally should share logic, but for now we duplicate or separate extraction
+    
+    # 1. Fetch Conditions
+    token = request.cookies.get(TOKEN_COOKIE_NAME)
+    if not token:
+        return JSONResponse({"error": "Unauthorized"}, status_code=401)
+        
+    headers = {"Authorization": f"Bearer {token}"}
+    
+    conditions = []
+    try:
+        c_resp = requests.get(
+            f"{FHIR_SERVICE_URL}/condition",
+            params={"patient": patient_id},
+            headers=headers,
+            timeout=5
+        )
+        if c_resp.status_code == 200:
+             body = c_resp.json()
+             if "entry" in body:
+                 conditions = [e["resource"] for e in body["entry"]]
+             elif "resources" in body:
+                 conditions = body.get("resources", [])
+    except:
+        pass
 
-    return templates.TemplateResponse(
-        "emr_summary.html",
-        {
-            "request": request,
-            "patient": patient,
-            "conditions": conditions,
-            "observations": observations,
-            "error": error
-        }
-    )
+    observations = []
+    try:
+        o_resp = requests.get(
+            f"{FHIR_SERVICE_URL}/observation",
+            params={"patient": patient_id},
+            headers=headers,
+            timeout=5
+        )
+        if o_resp.status_code == 200:
+             body = o_resp.json()
+             if "entry" in body:
+                 observations = [e["resource"] for e in body["entry"]]
+             elif "resources" in body:
+                 observations = body.get("resources", [])
+    except:
+        pass
+
+    # --- Generate Knowledge Graph Data ---
+    graph_nodes = []
+    graph_edges = []
+    
+    # Central Patient Node
+    graph_nodes.append({
+        "id": "patient",
+        "label": "Patient",
+        "shape": "box",
+        "font": {"size": 20, "color": "#ffffff"},
+        "color": {"background": "#2196f3", "border": "#1976d2", "highlight": "#1e88e5"}
+    })
+
+    # Conditions
+    for i, c in enumerate(conditions):
+        code_obj = c.get("code", {})
+        title = "Unknown"
+        codings = code_obj.get("coding", [])
+        if codings and codings[0].get("display"):
+             title = codings[0].get("display")
+        elif code_obj.get("text"):
+             title = code_obj.get("text")
+        elif codings and codings[0].get("code"):
+             title = f"Condition {codings[0].get('code')}"
+        
+        node_id = f"c_{i}"
+        graph_nodes.append({
+            "id": node_id,
+            "label": title,
+            "group": "condition",
+            "shape": "dot",
+            "color": {"background": "#ffebee", "border": "#f44336"}
+        })
+        graph_edges.append({
+            "from": "patient",
+            "to": node_id,
+            "label": "Diagnosed",
+            "arrows": "to",
+            "color": {"color": "#ef9a9a"}
+        })
+
+    # Observations
+    for i, o in enumerate(observations):
+        code_obj = o.get("code", {})
+        title = "Unknown"
+        codings = code_obj.get("coding", [])
+        if codings and codings[0].get("display"):
+             title = codings[0].get("display")
+        elif code_obj.get("text"):
+             title = code_obj.get("text")
+        
+        val = ""
+        if "valueQuantity" in o:
+             q = o["valueQuantity"]
+             val = f"{q.get('value')} {q.get('unit', '')}"
+        elif "valueString" in o:
+             val = o["valueString"]
+        elif "component" in o:
+             if o["component"]:
+                 q = o["component"][0].get("valueQuantity", {})
+                 val = f"{q.get('value', '')}"
+        
+        label = f"{title}\n{val}" if val else title
+
+        node_id = f"o_{i}"
+        graph_nodes.append({
+            "id": node_id,
+            "label": label,
+            "group": "observation",
+            "shape": "dot",
+            "color": {"background": "#f3e5f5", "border": "#9c27b0"}
+        })
+        graph_edges.append({
+            "from": "patient",
+            "to": node_id,
+            "label": "Measured",
+            "arrows": "to",
+            "color": {"color": "#ce93d8"}
+        })
+
+    return {"nodes": graph_nodes, "edges": graph_edges}
+
+# Silence Chrome Devtools 404
+@app.get("/.well-known/appspecific/com.chrome.devtools.json")
+def chrome_devtools_silence():
+    return {}
 
 
 # ---------- Report Upload → Extraction Service ----------
 
 @app.get("/search", response_class=HTMLResponse)
 async def global_search(
-    request: Request,
     query: str = None
 ):
-    token = get_token(request)
-    if not token and not DEV:
+    current_user_obj = get_current_user(request)
+    if not current_user_obj and not DEV:
         return RedirectResponse(url="/login", status_code=302)
+
+    token = get_token(request) # Still needed for headers
 
     headers = build_auth_headers(token)
     patients_map = {} # Use dict to deduplicate by ID
@@ -640,13 +949,15 @@ async def global_search(
     except Exception as e:
         error = f"Service error: {e}"
 
+    print(f"DEBUG: Pre-Render User: {user}")
     return templates.TemplateResponse(
         "index.html",
         {
             "request": request,
             "patients": patients,
             "error": error,
-            "query": query
+            "query": query,
+            "user": current_user_obj # Use the user object defined at the start of the function
         }
     )
 
@@ -655,9 +966,24 @@ async def global_search(
 @app.get("/upload-report", response_class=HTMLResponse)
 async def upload_report_page(request: Request):
     """Show upload form for a report."""
-    token = get_token(request)
-    if not token and not DEV:
+    user = get_current_user(request)
+    if not user and not DEV:
         return RedirectResponse(url="/login", status_code=302)
+
+    token = get_token(request)
+
+    user = get_current_user(request)
+    if user and not user.get("can_upload"):
+        return templates.TemplateResponse(
+            "upload.html",
+            {
+                "request": request,
+                "error": "You do not have permission to upload reports.",
+                "result_json": None,
+                "patient_id": "",
+                "disabled": True # Add this to template to disable inputs? Or just error
+            },
+        )
 
     return templates.TemplateResponse(
         "upload.html",
@@ -683,6 +1009,18 @@ async def upload_report(
     token = get_token(request)
     if not token and not DEV:
         return RedirectResponse(url="/login", status_code=302)
+
+    user = get_current_user(request)
+    if user and not user.get("can_upload"):
+         return templates.TemplateResponse(
+            "upload.html",
+             {
+                "request": request,
+                "error": "You do not have permission to upload reports.",
+                "result_json": None,
+                "patient_id": ""
+             }
+         )
 
     error = None
     result_json = None
@@ -773,6 +1111,13 @@ async def save_extracted(
     token = get_token(request)
     if not token and not DEV:
         return RedirectResponse(url="/login", status_code=303)
+
+    user = get_current_user(request)
+    if user and not user.get("can_upload"):
+        return templates.TemplateResponse(
+            "review.html", 
+            {"request": request, "error": "You do not have permission to save reports.", "data": {}, "image_url": None, "filename": ""}
+        )
 
     # Reconstruct data from form or use raw_json
     try:
@@ -921,7 +1266,7 @@ async def confirm_save(request: Request, fhir_bundle: str = Form(...)):
                 {
                     "request": request,
                     "message": "Medical records confirmed and saved successfully!",
-                    "pii": result_json.get("PII", {}) if result_json else {}
+                    "pii": {} # result_json is not available here, handled by success page logic or removed
                 }
             )
         else:
@@ -929,3 +1274,215 @@ async def confirm_save(request: Request, fhir_bundle: str = Form(...)):
             
     except Exception as e:
         return HTMLResponse(content=f"Failed to process request: {str(e)}", status_code=500)
+
+
+# -------------------------------------------------------------------------
+# NEW: AI Summary & Reporting Endpoints
+# -------------------------------------------------------------------------
+
+@app.post("/api/emr/{patient_id}/summary")
+async def generate_clinical_summary(patient_id: str, request: Request):
+    """
+    Generates a clinical summary for the patient using available data via Gemini AI.
+    """
+    token = request.cookies.get(TOKEN_COOKIE_NAME)
+    headers = build_auth_headers(token)
+    
+    # 1. Fetch Data
+    patient_data = {}
+    
+    try:
+        # Fetch Patient
+        p_resp = requests.get(f"{FHIR_BASE_URL}/Patient/{patient_id}", headers=headers, timeout=5)
+        if p_resp.status_code == 200:
+            patient = p_resp.json()
+            reidentify_patient(patient)
+            patient_data["overview"] = patient
+        else:
+            return {"summary": "Error: Patient not found"}
+            
+        # Fetch Conditions
+        c_resp = requests.get(f"{FHIR_BASE_URL}/Condition", params={"patient": patient_id}, headers=headers, timeout=5)
+        if c_resp.status_code == 200:
+            c_body = c_resp.json()
+            patient_data["conditions"] = [e["resource"] for e in c_body.get("entry", [])]
+            
+        # Fetch Observations
+        o_resp = requests.get(f"{FHIR_BASE_URL}/Observation", params={"patient": patient_id}, headers=headers, timeout=5)
+        if o_resp.status_code == 200:
+            o_body = o_resp.json()
+            patient_data["observations"] = [e["resource"] for e in o_body.get("entry", [])]
+            
+    except Exception as e:
+        return {"summary": f"Error fetching data for summary: {str(e)}"}
+
+    # 2. Call Gemini
+    api_key = os.getenv("GEMINI_API_KEY")
+    if not api_key:
+        return {"summary": "Error: GEMINI_API_KEY not configured on server."}
+        
+    try:
+        genai.configure(api_key=api_key)
+        model = genai.GenerativeModel('gemini-2.5-flash')
+        
+        # Construct Prompt
+        data_str = json.dumps(patient_data, default=str)
+        prompt = f"""
+        You are an expert clinical assistant. Summarize the following patient record for a doctor.
+        Focus on:
+        1. Patient demographics.
+        2. Active clinical conditions and their onset.
+        3. Key recent observations/vitals.
+        4. Brief assessment/plan recommendation.
+        
+        Keep it professional, concise, and structured. Use Markdown formatting.
+        
+        Patient Data (FHIR JSON):
+        {data_str}
+        """
+        
+        response = model.generate_content(prompt)
+        final_summary = response.text
+        return {"summary": final_summary}
+        
+    except Exception as e:
+        return {"summary": f"Error generating summary with AI: {str(e)}"}
+
+@app.get("/emr/{patient_id}/print")
+async def print_clinical_summary(patient_id: str, request: Request):
+    """
+    Renders a print-friendly page for the patient summary.
+    """
+    token = request.cookies.get(TOKEN_COOKIE_NAME)
+    headers = build_auth_headers(token)
+    
+    patient = None
+    conditions = []
+    
+    try:
+        p_resp = requests.get(f"{FHIR_BASE_URL}/Patient/{patient_id}", headers=headers, timeout=5)
+        if p_resp.status_code == 200:
+            patient = p_resp.json()
+            reidentify_patient(patient)
+            
+        c_resp = requests.get(f"{FHIR_BASE_URL}/Condition", params={"patient": patient_id}, headers=headers, timeout=5)
+        if c_resp.status_code == 200:
+            c_body = c_resp.json()
+            conditions = [e["resource"] for e in c_body.get("entry", [])]
+            
+    except:
+        pass
+        
+    return templates.TemplateResponse("emr_print.html", {
+        "request": request,
+        "patient": patient,
+        "conditions": conditions,
+        "generated_summary": "Please generate a fresh summary from the dashboard."
+    })
+
+
+@app.get("/api/emr/{patient_id}/graph")
+async def get_patient_graph(patient_id: str, request: Request):
+    """
+    Returns nodes and edges for the Knowledge Graph.
+    """
+    token = request.cookies.get(TOKEN_COOKIE_NAME)
+    headers = build_auth_headers(token)
+    
+    nodes = []
+    edges = []
+    
+    patient = None
+    conditions = []
+    observations = []
+
+    # 1. Fetch Data (Try Patient endpoint which might return a Bundle)
+    try:
+        p_resp = requests.get(f"{FHIR_BASE_URL}/Patient/{patient_id}", headers=headers, timeout=5)
+        print(f"Graph Debug: Patient/Bundle Resp: {p_resp.status_code}")
+        
+        if p_resp.status_code == 200:
+            body = p_resp.json()
+            if body.get("resourceType") == "Bundle":
+                print("Graph Debug: Received Bundle from Patient endpoint")
+                for entry in body.get("entry", []):
+                    res = entry.get("resource", {})
+                    rt = res.get("resourceType")
+                    if rt == "Patient":
+                        patient = res
+                    elif rt == "Condition":
+                        conditions.append(res)
+                    elif rt == "Observation":
+                        observations.append(res)
+            else:
+                print("Graph Debug: Received direct Patient resource")
+                patient = body
+
+        # Fallback Fetch Conditions
+        if not conditions:
+            print("Graph Debug: Fetching conditions separately")
+            c_resp = requests.get(f"{FHIR_BASE_URL}/Condition", params={"patient": patient_id}, headers=headers, timeout=5)
+            if c_resp.status_code == 200:
+                c_body = c_resp.json()
+                if "entry" in c_body:
+                    conditions = [e["resource"] for e in c_body.get("entry", [])]
+                elif "resources" in c_body:
+                    conditions = c_body.get("resources", [])
+
+        # Fallback Fetch Observations
+        if not observations:
+             print("Graph Debug: Fetching observations separately")
+             o_resp = requests.get(f"{FHIR_BASE_URL}/Observation", params={"patient": patient_id}, headers=headers, timeout=5)
+             if o_resp.status_code == 200:
+                o_body = o_resp.json()
+                if "entry" in o_body:
+                    observations = [e["resource"] for e in o_body.get("entry", [])]
+                elif "resources" in o_body:
+                    observations = o_body.get("resources", [])
+
+    except Exception as e:
+        print(f"Graph Error: {e}")
+        return {"nodes": [], "edges": []}
+
+    # 2. Build Graph
+    # Patient Node
+    if patient:
+        reidentify_patient(patient)
+        p_name = patient.get("name", [{'text': 'Patient'}])[0].get('text', 'Patient')
+        nodes.append({"id": "Patient", "label": p_name, "group": "patient", "shape": "diamond", "size": 25, "color": "#FFC107"})
+    else:
+        nodes.append({"id": "Patient", "label": "Unknown", "group": "patient"})
+
+    # Condition Nodes
+    print(f"Graph Debug: Processing {len(conditions)} conditions")
+    for c in conditions:
+        cid = c.get("id")
+        name = c.get('code', {}).get('text') or c.get('code', {}).get('coding', [{}])[0].get('display', 'Condition')
+        status = c.get('clinicalStatus', {}).get('coding', [{}])[0].get('code', 'active')
+        color = "#FF5252" if status == 'active' else "#4CAF50" # Red for active, Green for resolved
+        
+        nodes.append({"id": cid, "label": name, "group": "condition", "color": color})
+        edges.append({"from": "Patient", "to": cid, "label": status})
+
+    # Observation Nodes
+    # Sort recent
+    observations.sort(key=lambda x: x.get('effectiveDateTime', ''), reverse=True)
+    print(f"Graph Debug: Processing {len(observations)} observations (capped at 8)")
+    for o in observations[:8]:
+        oid = o.get("id")
+        name = o.get('code', {}).get('text') or o.get('code', {}).get('coding', [{}])[0].get('display', 'Observation')
+        val = o.get('valueQuantity', {}).get('value')
+        unit = o.get('valueQuantity', {}).get('unit', '')
+        label = f"{name}\n{val} {unit}" if val else name
+        
+        nodes.append({"id": oid, "label": label, "group": "observation", "color": "#2196F3"})
+        edges.append({"from": "Patient", "to": oid})
+
+    return {"nodes": nodes, "edges": edges}
+
+@app.get("/emr/{patient_id}/graph_view")
+async def view_graph_page(patient_id: str, request: Request):
+    """
+    Renders the isolated graph visualizer page.
+    """
+    return templates.TemplateResponse("graph_view.html", {"request": request, "patient_id": patient_id})

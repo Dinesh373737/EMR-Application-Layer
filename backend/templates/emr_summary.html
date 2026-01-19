@@ -32,7 +32,33 @@
     </h1>
     <p><strong>Patient ID:</strong> {{ patient.id }}</p>
     <p><strong>Date of Birth:</strong> {{ patient.birthDate or "NA" }}</p>
+
+    <div style="margin-top: 1rem; display: flex; gap: 1rem;">
+        <button id="btnGenSummary" class="btn"
+            style="background: #2196f3; color: white; display: inline-flex; align-items: center; gap: 8px; padding: 10px 20px; border-radius: 6px; border: none; cursor: pointer; font-weight: 500; transition: background 0.2s;">
+            <span style="font-size: 1.2rem;">✨</span> Generate AI Summary
+        </button>
+        <button id="btnVisualGraph" class="btn"
+            style="background: #9C27B0; color: white; display: inline-flex; align-items: center; gap: 8px; padding: 10px 20px; border-radius: 6px; border: none; cursor: pointer; font-weight: 500; transition: background 0.2s;">
+            <span style="font-size: 1.2rem;">🕸️</span> Visualize Graph
+        </button>
+        <button id="btnDownloadReport" class="btn"
+            style="display: none; background: #607d8b; color: white; display: inline-flex; align-items: center; gap: 8px; padding: 10px 20px; border-radius: 6px; border: none; cursor: pointer; font-weight: 500; transition: background 0.2s;">
+            <span style="font-size: 1.2rem;">📄</span> Download Report
+        </button>
+    </div>
 </div>
+
+<!-- ================= AI SUMMARY CARD ================= -->
+<div class="card" id="summaryCard" style="display: none; border: 1px solid #bbdefb; background: #e3f2fd;">
+    <h2 style="color: #0d47a1; margin-top: 0;">Clinical Summary</h2>
+    <div id="summaryContent" style="line-height: 1.6; color: #37474f;">
+        Loading summary...
+    </div>
+</div>
+
+
+
 
 <!-- ================= ADMISSION DETAILS ================= -->
 <div class="card">
@@ -64,17 +90,227 @@
 
 <!-- ================= TIMELINE ================= -->
 <div class="card">
-    <h2>Clinical Timeline</h2>
-    <ul>
-        <li>Patient record created</li>
-        {% for condition in conditions %}
-        <li>Condition added: {{ condition.code.text }}</li>
+    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 2rem;">
+        <h2>Clinical Timeline</h2>
+        <span class="badge" style="background: #e8eaf6; color: #3f51b5;">{{ timeline|length }} Events</span>
+    </div>
+
+    <style>
+        .timeline {
+            position: relative;
+            padding-left: 2rem;
+            border-left: 2px solid #e0e0e0;
+            margin-left: 1rem;
+        }
+
+        .timeline-item {
+            position: relative;
+            margin-bottom: 1rem;
+            /* Reduced from 2rem */
+        }
+
+        .timeline-dot {
+            position: absolute;
+            left: -2.35rem;
+            /* Adjusted for smaller size */
+            top: 4px;
+            /* Align with title */
+            width: 1.8rem;
+            /* Reduced size */
+            height: 1.8rem;
+            /* Reduced size */
+            background: white;
+            border: 2px solid #e0e0e0;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 1rem;
+            /* Smaller icon */
+            z-index: 1;
+        }
+
+        .timeline-content {
+            background: #fff;
+            border: 1px solid #eee;
+            border-radius: 6px;
+            padding: 0.75rem;
+            /* Reduced padding */
+            box-shadow: 0 1px 2px rgba(0, 0, 0, 0.02);
+            transition: transform 0.2s, box-shadow 0.2s;
+            display: flex;
+            flex-direction: column;
+            gap: 2px;
+        }
+
+        .timeline-content:hover {
+            transform: translateY(-1px);
+            box-shadow: 0 2px 5px rgba(0, 0, 0, 0.05);
+        }
+
+        .timeline-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: baseline;
+        }
+
+        .timeline-date {
+            font-size: 0.75rem;
+            color: #757575;
+            font-weight: 500;
+        }
+
+        .timeline-type {
+            font-size: 0.7rem;
+            text-transform: uppercase;
+            font-weight: 700;
+            letter-spacing: 0.5px;
+            color: #9e9e9e;
+        }
+
+        .timeline-title {
+            font-size: 1rem;
+            font-weight: 600;
+            color: #333;
+            margin: 0;
+        }
+
+        .timeline-details {
+            font-size: 0.85rem;
+            color: #555;
+            margin-top: 4px;
+        }
+    </style>
+
+    {% if timeline %}
+    <div class="timeline">
+        {% for event in timeline %}
+        <div class="timeline-item">
+            <div class="timeline-dot"
+                style="border-color: {{ event.text_color|default('#ccc', true) }}; color: {{ event.text_color|default('#333', true) }}; background-color: {{ event.color|default('#f5f5f5', true) }};">
+                {{ event.icon }}
+            </div>
+            <div class="timeline-content" style="border-left: 3px solid {{ event.text_color|default('#ccc', true) }};">
+                <div class="timeline-header">
+                    <span class="timeline-type" style="color: {{ event.text_color|default('#333', true) }};">
+                        {{ event.type }}
+                    </span>
+                    <span class="timeline-date">{{ event.display_date }}</span>
+                </div>
+            </div>
+            <div class="timeline-title">{{ event.title }}</div>
+            <div class="timeline-details">
+                {{ event.details }}
+            </div>
+        </div>
         {% endfor %}
-        {% for obs in observations %}
-        <li>Observation recorded: {{ obs.code.text }}</li>
-        {% endfor %}
-    </ul>
+    </div>
+    {% else %}
+    <div style="text-align: center; color: #999; padding: 2rem;">
+        <p>No timeline events found.</p>
+    </div>
+    {% endif %}
 </div>
 
 {% endif %}
+
+<script>
+    document.addEventListener('DOMContentLoaded', function () {
+        const btnGenSummary = document.getElementById('btnGenSummary');
+        const btnDownloadReport = document.getElementById('btnDownloadReport');
+        const summaryCard = document.getElementById('summaryCard');
+        const summaryContent = document.getElementById('summaryContent');
+
+        // Generate Summary
+        if (btnGenSummary) {
+            btnGenSummary.addEventListener('click', async () => {
+                summaryCard.style.display = 'block';
+                summaryContent.innerHTML = '<em>Generating clinical summary using AI... please wait...</em>';
+
+                try {
+                    const response = await fetch('/api/emr/{{ patient.id }}/summary', { method: 'POST' });
+                    if (!response.ok) throw new Error('Failed to generate summary');
+
+                    const data = await response.json();
+                    // Render simple markdown-like bolding
+                    let html = data.summary.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
+                    html = html.replace(/\n/g, '<br>');
+                    summaryContent.innerHTML = html;
+
+                    // Allow printing now that we have content
+                    if (btnDownloadReport) btnDownloadReport.style.display = 'inline-flex';
+
+                } catch (error) {
+                    summaryContent.innerHTML = `<span style="color: red;">Error: ${error.message}</span>`;
+                }
+            });
+        }
+
+        // Handle Print/PDF
+        if (btnDownloadReport) {
+            btnDownloadReport.addEventListener('click', (e) => {
+                e.preventDefault();
+                const summaryText = summaryContent.innerHTML;
+                const printWindow = window.open('/emr/{{ patient.id }}/print', '_blank');
+
+                // Wait for the new window to load, then inject summary
+                printWindow.onload = function () {
+                    const summaryContainer = printWindow.document.querySelector('.section div'); // The pre-wrap div
+                    if (summaryContainer && !summaryText.includes('Loading') && !summaryText.includes('Generating')) {
+                        summaryContainer.innerHTML = summaryText;
+                    }
+                    // printWindow.print(); // Optional: auto-print
+                };
+            });
+        }
+
+        // Graph Modal
+        const btnVisualGraph = document.getElementById('btnVisualGraph');
+        const graphModal = document.getElementById('graphModal');
+        const graphFrame = document.getElementById('graphFrame');
+        const btnCloseGraph = document.getElementById('btnCloseGraph');
+
+        if (btnVisualGraph && graphModal) {
+            btnVisualGraph.addEventListener('click', () => {
+                graphModal.showModal();
+                if (!graphFrame.src) {
+                    graphFrame.src = "/emr/{{ patient.id }}/graph_view";
+                }
+            });
+        }
+
+        if (btnCloseGraph) {
+            btnCloseGraph.addEventListener('click', () => {
+                graphModal.close();
+                // Optional: clear src to save memory or reset
+                // graphFrame.src = ""; 
+            });
+        }
+
+        if (graphModal) {
+            graphModal.addEventListener('click', (e) => {
+                const rect = graphModal.getBoundingClientRect();
+                if (e.clientX < rect.left || e.clientX > rect.right ||
+                    e.clientY < rect.top || e.clientY > rect.bottom) {
+                    graphModal.close();
+                }
+            });
+        }
+    });
+</script>
+
+<dialog id="graphModal"
+    style="width: 90vw; height: 80vh; max-width: 1200px; max-height: 800px; padding: 0; border: none; border-radius: 8px; box-shadow: 0 4px 6px rgba(0,0,0,0.1);">
+    <div style="height: 100%; display: flex; flex-direction: column;">
+        <div
+            style="padding: 10px 20px; background: #f5f5f5; display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #ddd;">
+            <h3 style="margin: 0; color: #333;">Knowledge Graph</h3>
+            <button id="btnCloseGraph"
+                style="background: none; border: none; font-size: 24px; cursor: pointer;">&times;</button>
+        </div>
+        <div style="flex: 1; overflow: hidden;">
+            <iframe id="graphFrame" style="width: 100%; height: 100%; border: none;"></iframe>
+        </div>
+    </div>
+</dialog>
 {% endblock %}

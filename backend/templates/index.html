@@ -2,8 +2,13 @@
 {% block title %}Patients - EMR{% endblock %}
 
 {% block content %}
-<div class="page-header">
+<div class="page-header" style="display: flex; justify-content: space-between; align-items: center;">
     <h1>Patient List</h1>
+    <!-- DEBUG: User in Template = {{ user }} -->
+    <!-- DEBUG: Role = {{ user.get('role') if user else 'None' }} -->
+    <a href="/admin" class="btn btn-primary" style="background-color: #333;">
+        Admin Dashboard ({{ user['role'] if user else 'No User' }})
+    </a>
 </div>
 
 <div class="card" style="margin-bottom: 2rem;">

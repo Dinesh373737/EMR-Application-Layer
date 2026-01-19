@@ -1,0 +1,156 @@
+{% extends "base.html" %}
+{% block title %}Admin Dashboard - EMR{% endblock %}
+
+{% block content %}
+<div class="row">
+    <div class="col" style="margin-bottom: 2rem;">
+        <h2>User Management</h2>
+        <p style="color: var(--text-secondary);">Create and manage system users.</p>
+    </div>
+</div>
+
+<div style="display: grid; grid-template-columns: 2fr 1fr; gap: 2rem; align-items: start;">
+
+    <!-- User List Section -->
+    <div class="card" style="overflow: hidden;">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem;">
+            <h3>Existing Users</h3>
+            <span class="badge" style="background: #e3f2fd; color: #0d47a1;">{{ users|length }} Total</span>
+        </div>
+
+        <div class="table-container" style="max-height: 600px; overflow-y: auto;">
+            <table class="table" style="width: 100%; border-collapse: separate; border-spacing: 0;">
+                <thead style="position: sticky; top: 0; background: white; z-index: 1;">
+                    <tr style="text-align: left; border-bottom: 2px solid #eee;">
+                        <th style="padding: 12px; border-bottom: 2px solid #eee;">Username</th>
+                        <th style="padding: 12px; border-bottom: 2px solid #eee;">Role</th>
+                        <th style="padding: 12px; border-bottom: 2px solid #eee;">Permissions</th>
+                        <th style="padding: 12px; border-bottom: 2px solid #eee;">Created</th>
+                        <th style="padding: 12px; border-bottom: 2px solid #eee;">Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for u in users %}
+                    <tr style="border-bottom: 1px solid #f0f0f0; transition: background 0.2s;">
+                        <td style="padding: 12px; font-weight: 500; color: var(--text-primary);">
+                            <div style="display: flex; align-items: center; gap: 8px;">
+                                <div
+                                    style="width: 32px; height: 32px; background: #f0f0f0; border-radius: 50%; display: flex; align-items: center; justify-content: center; color: #666; font-size: 0.8rem;">
+                                    {{ u.username[:2].upper() }}
+                                </div>
+                                {{ u.username }}
+                            </div>
+                        </td>
+                        <td style="padding: 12px;">
+                            <span class="badge"
+                                style="padding: 4px 10px; border-radius: 12px; font-size: 0.8rem; background: {{ '#e8f5e9' if u.role == 'admin' else '#f5f5f5' }}; color: {{ '#2e7d32' if u.role == 'admin' else '#616161' }}; border: 1px solid {{ '#c8e6c9' if u.role == 'admin' else '#eeeeee' }};">
+                                {{ u.role|title }}
+                            </span>
+                        </td>
+                        <td style="padding: 12px;">
+                            {% if u.can_upload %}
+                            <span
+                                style="display: inline-flex; align-items: center; gap: 4px; color: #2e7d32; font-size: 0.9rem; font-weight: 500;">
+                                <span style="font-size: 1.1rem;">✓</span> Upload
+                            </span>
+                            {% else %}
+                            <span style="color: #bdbdbd; font-size: 0.9rem;">Read Only</span>
+                            {% endif %}
+                        </td>
+                        <td style="padding: 12px; font-size: 0.85rem; color: #757575;">
+                            {{ u.created_at[:10] }}
+                        </td>
+                        <td style="padding: 12px;">
+                            {% if u.username == 'admin' %}
+                            <span
+                                style="display: inline-block; padding: 4px 10px; background: #fafafa; border: 1px solid #eee; border-radius: 6px; color: #9e9e9e; font-size: 0.8rem; font-weight: 500;">
+                                🔒 Master
+                            </span>
+                            {% elif u.role != 'admin' or users|selectattr('role', 'equalto', 'admin')|list|length > 1 %}
+                            <form method="post" action="/admin/delete-user" style="display:inline;"
+                                onsubmit="return confirm('Are you sure you want to permanently delete user {{ u.username }}?');">
+                                <input type="hidden" name="user_id" value="{{ u.id }}">
+                                <button type="submit" class="btn-icon delete-btn"
+                                    style="background: #ffebee; border: 1px solid #ffcdd2; color: #c62828; padding: 4px 10px; border-radius: 6px; cursor: pointer; font-size: 0.8rem; transition: all 0.2s;"
+                                    onmouseover="this.style.background='#ffcdd2'"
+                                    onmouseout="this.style.background='#ffebee'">
+                                    Delete
+                                </button>
+                            </form>
+                            {% else %}
+                            <span style="color: #bdbdbd; font-size: 0.8rem;">Protected</span>
+                            {% endif %}
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <!-- Create User Form Section -->
+    <div class="col">
+        <div class="card" style="position: sticky; top: 2rem;">
+            <div style="border-bottom: 1px solid #eee; padding-bottom: 1rem; margin-bottom: 1.5rem;">
+                <h3 style="margin: 0; display: flex; align-items: center; gap: 8px;">
+                    <span style="font-size: 1.2rem;">👤</span> Create New User
+                </h3>
+            </div>
+
+            {% if error %}
+            <div class="alert" style="margin-bottom: 1rem; border-left: 4px solid #d32f2f;">{{ error }}</div>
+            {% endif %}
+            {% if message %}
+            <div class="alert"
+                style="background-color: #d4edda; color: #155724; border-left: 4px solid #2e7d32; margin-bottom: 1rem;">
+                {{ message }}</div>
+            {% endif %}
+
+            <form method="post" action="/admin/create-user" class="form"
+                style="display: flex; flex-direction: column; gap: 1rem;">
+                <div>
+                    <label for="username"
+                        style="display: block; margin-bottom: 6px; font-weight: 500; font-size: 0.9rem; color: var(--text-primary);">Username</label>
+                    <input type="text" id="username" name="username" required
+                        style="width: 100%; padding: 10px; border: 1px solid #ddd; border-radius: 6px; font-size: 0.95rem; transition: border-color 0.2s;"
+                        onfocus="this.style.borderColor='var(--primary-color)'" onblur="this.style.borderColor='#ddd'"
+                        placeholder="Enter username">
+                </div>
+                <div>
+                    <label for="password"
+                        style="display: block; margin-bottom: 6px; font-weight: 500; font-size: 0.9rem; color: var(--text-primary);">Password</label>
+                    <input type="password" id="password" name="password" required
+                        style="width: 100%; padding: 10px; border: 1px solid #ddd; border-radius: 6px; font-size: 0.95rem;"
+                        placeholder="Enter password">
+                </div>
+
+                <div style="display: grid; grid-template-columns: 1fr; gap: 1rem;">
+                    <div>
+                        <label for="role"
+                            style="display: block; margin-bottom: 6px; font-weight: 500; font-size: 0.9rem; color: var(--text-primary);">Role</label>
+                        <select id="role" name="role"
+                            style="width: 100%; padding: 10px; border-radius: 6px; border: 1px solid #ddd; background: white; cursor: pointer;">
+                            <option value="user">User (Standard)</option>
+                            <option value="admin">Admin (Full Access)</option>
+                        </select>
+                    </div>
+                </div>
+
+                <div style="margin: 0.5rem 0; background: #f9f9f9; padding: 10px; border-radius: 6px;">
+                    <label
+                        style="display: flex; align-items: center; gap: 10px; font-weight: normal; cursor: pointer; color: var(--text-primary);">
+                        <input type="checkbox" name="can_upload" value="true"
+                            style="width: 16px; height: 16px; cursor: pointer;">
+                        <span style="font-size: 0.9rem;">Allow Uploading Reports</span>
+                    </label>
+                </div>
+
+                <button type="submit" class="btn btn-primary"
+                    style="width: 100%; padding: 12px; font-weight: 600; margin-top: 0.5rem;">
+                    Create User Account
+                </button>
+            </form>
+        </div>
+    </div>
+</div>
+{% endblock %}

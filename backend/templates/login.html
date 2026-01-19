@@ -19,8 +19,26 @@
 
             <div>
                 <label for="password">Password</label>
-                <input type="password" id="password" name="password" required placeholder="Enter your password">
+                <div style="position: relative;">
+                    <input type="password" id="password" name="password" required placeholder="Enter your password"
+                        style="width: 100%;">
+                    <button type="button" id="togglePassword"
+                        style="position: absolute; right: 10px; top: 50%; transform: translateY(-50%); background: none; border: none; cursor: pointer; color: #666;">
+                        Show
+                    </button>
+                </div>
             </div>
+
+            <script>
+                const togglePassword = document.querySelector('#togglePassword');
+                const password = document.querySelector('#password');
+
+                togglePassword.addEventListener('click', function (e) {
+                    const type = password.getAttribute('type') === 'password' ? 'text' : 'password';
+                    password.setAttribute('type', type);
+                    this.textContent = type === 'password' ? 'Show' : 'Hide';
+                });
+            </script>
 
             <button type="submit" style="width: 100%; margin-top: 1rem;">Login</button>
         </form>

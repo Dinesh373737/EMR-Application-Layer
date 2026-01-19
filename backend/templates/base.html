@@ -20,6 +20,10 @@
         <nav>
             <a href="/dashboard">Patients</a>
             <a href="/upload-report">Upload Report</a>
+            <!-- DEBUG USER: {{ user }} -->
+            <a href="/admin" style="color: #ff5252; font-weight: bold;">
+                Admin ({{ user.role if user else 'None' }})
+            </a>
             <a href="/logout" class="btn btn-secondary" style="padding: 0.25rem 0.75rem; font-size: 0.85rem;">Logout</a>
         </nav>
     </header>
