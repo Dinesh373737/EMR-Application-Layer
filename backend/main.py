@@ -9,7 +9,13 @@ import google.generativeai as genai
 from dotenv import load_dotenv
 
 # Load environment variables
-load_dotenv()
+# Load environment variables
+env_path = list(Path(__file__).resolve().parent.parents)[0] / '.env' # Parent is 'backend', parent.parent is root? No.
+# BASE_DIR is .../backend. 
+# We want .../.env
+# Path(__file__).parent is backend. parent.parent is root.
+env_path = Path(__file__).resolve().parent.parent / '.env'
+load_dotenv(dotenv_path=env_path)
 
 from fastapi import FastAPI, Request, Form, UploadFile, File
 from fastapi.responses import HTMLResponse, RedirectResponse
@@ -27,7 +33,7 @@ BASE_DIR = Path(__file__).resolve().parent
 
 # Flask Data Access Service (Microservice 4)
 FHIR_BASE_URL = os.getenv("FHIR_BASE_URL", "http://localhost:5004/api/fhir")
-AUTH_BASE_URL = os.getenv("AUTH_BASE_URL", "http://localhost:5004/api/auth")
+AUTH_BASE_URL = os.getenv("AUTH_BASE_URL", "http://localhost:5004/api/fhir/auth")
 
 # Extraction Service (Microservice 1)
 EXTRACTION_BASE_URL = os.getenv("EXTRACTION_BASE_URL", "http://localhost:8000")
@@ -241,7 +247,8 @@ async def login_post(
         
         if resp.status_code == 200:
             data = resp.json()
-            token = data.get("token")
+            # Handle {"tokens": {"access": "..."}} or {"token": "..."}
+            token = data.get("tokens", {}).get("access") or data.get("token")
             response = RedirectResponse(url="/dashboard", status_code=302)
             response.set_cookie(
                 key=TOKEN_COOKIE_NAME,
@@ -803,6 +810,7 @@ def chrome_devtools_silence():
 
 @app.get("/search", response_class=HTMLResponse)
 async def global_search(
+    request: Request,
     query: str = None
 ):
     current_user_obj = get_current_user(request)
@@ -820,6 +828,23 @@ async def global_search(
 
     try:
         search_lower = query.lower()
+
+        # --- 0. SEARCH BY PATIENT ID (Direct Lookup) ---
+        # If the query looks like a UUID or ID, try fetching directly
+        try:
+             # Try direct fetch
+             direct_p = requests.get(
+                 f"{FHIR_BASE_URL}/Patient/{query}",
+                 headers=headers,
+                 timeout=5
+             )
+             if direct_p.status_code == 200:
+                  body = direct_p.json()
+                  # Check if it's actually a patient resource (and not an error/OperationOutcome)
+                  if body.get("resourceType") == "Patient":
+                       patients_map[body["id"]] = body
+        except Exception:
+             pass
 
         # --- 1. SEARCH BY NAME (Tokenized) ---
         # Get token for the query string to search in DB
@@ -843,7 +868,7 @@ async def global_search(
             if not phrase.strip(): continue
             try:
                  deid_resp = requests.post(
-                     f"{ACE_BASE_URL}/deidentify",
+                     f"{ACE_ENDPOINT}/deidentify",
                      json={
                          "Document_Type": "Medical Report",
                          "PII": {"GivenName": phrase} 
@@ -887,43 +912,37 @@ async def global_search(
                     if matched:
                         patients_map[p["id"]] = p
 
-        # --- 2. SEARCH BY DISEASE (Existing Logic) ---
-        resp = requests.get(
-            f"{FHIR_BASE_URL}/Condition",
-            headers=headers,
-            timeout=5
-        )
+        # --- 2. SEARCH BY DISEASE (New DB Logic) ---
+        try:
+            # Call server-side search (avoid fetching all)
+            resp = requests.get(
+                f"{FHIR_BASE_URL}/Condition",
+                params={"name": query, "_count": 100},
+                headers=headers,
+                timeout=5
+            )
 
-        if resp.status_code == 200:
-            all_conditions = resp.json().get("resources", [])
-            matching_conditions = []
-            
-            for c in all_conditions:
-                # Check ICD code
-                codings = c.get("code", {}).get("coding", [])
-                for coding in codings:
-                    if search_lower in coding.get("code", "").lower():
-                        matching_conditions.append(c)
-                        break
-                    if search_lower in coding.get("display", "").lower():
-                        matching_conditions.append(c)
-                        break
-                else:
-                    # Check code.text (disease name)
-                    code_text = c.get("code", {}).get("text", "")
-                    if search_lower in code_text.lower():
-                        matching_conditions.append(c)
+            if resp.status_code == 200:
+                body = resp.json()
+                matching_conditions = body.get("resources", [])
+                
+                patient_ids_from_cond = {
+                    c.get("subject", {})
+                     .get("reference", "")
+                     .replace("Patient/", "")
+                    for c in matching_conditions
+                }
+            else:
+                 patient_ids_from_cond = set()
 
-            patient_ids_from_cond = {
-                c.get("subject", {})
-                 .get("reference", "")
-                 .replace("Patient/", "")
-                for c in matching_conditions
-            }
-            
-            for pid in patient_ids_from_cond:
-                if pid and pid not in patients_map:
-                     # Fetch if not already found via name
+        except Exception as e:
+            print(f"Error searching conditions: {e}")
+            patient_ids_from_cond = set()
+
+        for pid in patient_ids_from_cond:
+            if pid and pid not in patients_map:
+                 # Fetch if not already found via name
+                try:
                     p = requests.get(
                         f"{FHIR_BASE_URL}/Patient/{pid}",
                         headers=headers,
@@ -939,6 +958,8 @@ async def global_search(
                                     break
                         else:
                              patients_map[body["id"]] = body
+                except Exception:
+                    pass
 
         patients = list(patients_map.values())
         
@@ -949,7 +970,7 @@ async def global_search(
     except Exception as e:
         error = f"Service error: {e}"
 
-    print(f"DEBUG: Pre-Render User: {user}")
+    print(f"DEBUG: Pre-Render User: {current_user_obj}")
     return templates.TemplateResponse(
         "index.html",
         {
@@ -973,7 +994,7 @@ async def upload_report_page(request: Request):
     token = get_token(request)
 
     user = get_current_user(request)
-    if user and not user.get("can_upload"):
+    if user and not (user.get("can_upload") or user.get("role") == "admin"):
         return templates.TemplateResponse(
             "upload.html",
             {
@@ -999,7 +1020,8 @@ async def upload_report_page(request: Request):
 @app.post("/upload-report", response_class=HTMLResponse)
 async def upload_report(
     request: Request,
-    file: UploadFile = File(...)
+    file: UploadFile = File(...),
+    handwritten: bool = Form(False)
 ):
     """
     Send report file to Extraction microservice (MS-1).
@@ -1011,7 +1033,8 @@ async def upload_report(
         return RedirectResponse(url="/login", status_code=302)
 
     user = get_current_user(request)
-    if user and not user.get("can_upload"):
+    # Allow if user has can_upload OR if user is admin
+    if user and not (user.get("can_upload") or user.get("role") == "admin"):
          return templates.TemplateResponse(
             "upload.html",
              {
@@ -1030,9 +1053,14 @@ async def upload_report(
         files = {
             "file": (file.filename, file_bytes, file.content_type or "application/octet-stream")
         }
+        
+        # Determine strict mode
+        is_handwritten_str = "true" if handwritten else "false"
+        
         data = {
             "use_gemini": "true",
-            "use_ollama": "false"
+            "use_ollama": "false",
+            "is_handwritten": is_handwritten_str
         }
 
         # NOTE: Adjust EXTRACTION_ENDPOINT to match actual MS-1 route

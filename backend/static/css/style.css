@@ -1,12 +1,17 @@
 :root {
     /* Color Palette */
-    --primary-color: #3b82f6; /* Modern Blue */
+    --primary-color: #3b82f6;
+    /* Modern Blue */
     --primary-hover: #2563eb;
-    --background-color: #f8fafc; /* Very light cool gray */
+    --background-color: #f8fafc;
+    /* Very light cool gray */
     --surface-color: #ffffff;
-    --text-primary: #1e293b; /* Slate 800 */
-    --text-secondary: #64748b; /* Slate 500 */
-    --border-color: #e2e8f0; /* Slate 200 */
+    --text-primary: #1e293b;
+    /* Slate 800 */
+    --text-secondary: #64748b;
+    /* Slate 500 */
+    --border-color: #e2e8f0;
+    /* Slate 200 */
     --success-color: #10b981;
     --danger-color: #ef4444;
     --shadow-sm: 0 1px 2px 0 rgb(0 0 0 / 0.05);
@@ -33,7 +38,12 @@ body {
 }
 
 /* Typography */
-h1, h2, h3, h4, h5, h6 {
+h1,
+h2,
+h3,
+h4,
+h5,
+h6 {
     font-family: var(--font-heading);
     color: var(--text-primary);
     margin-top: 0;
@@ -87,7 +97,8 @@ header nav a:hover {
 }
 
 .content {
-    max-width: 1200px; /* Wider container */
+    max-width: 1200px;
+    /* Wider container */
     margin: 2rem auto;
     padding: 0 1.5rem;
     min-height: 80vh;
@@ -138,7 +149,8 @@ input:focus {
     box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
 }
 
-button, .btn {
+button,
+.btn {
     display: inline-flex;
     align-items: center;
     justify-content: center;
@@ -152,10 +164,12 @@ button, .btn {
     font-size: 0.95rem;
     transition: all 0.2s ease;
     box-shadow: var(--shadow-sm);
-    text-decoration: none; /* For links styled as buttons */
+    text-decoration: none;
+    /* For links styled as buttons */
 }
 
-button:hover, .btn:hover {
+button:hover,
+.btn:hover {
     background-color: var(--primary-hover);
     transform: translateY(-1px);
     box-shadow: var(--shadow-md);
@@ -213,7 +227,7 @@ table.table th {
     text-transform: uppercase;
     font-size: 0.75rem;
     letter-spacing: 0.05em;
-    border-top: none; 
+    border-top: none;
 }
 
 table.table tr:last-child td {
@@ -257,7 +271,7 @@ table.table tr:hover td {
     padding: 0.5rem;
     border-radius: var(--radius-md);
     border: 1px solid var(--border-color);
-    flex-wrap: wrap; 
+    flex-wrap: wrap;
 }
 
 .search-bar input {
@@ -265,8 +279,9 @@ table.table tr:hover td {
     box-shadow: none;
     min-width: 320px;
 }
+
 .search-bar input:focus {
-    box-shadow: none; 
+    box-shadow: none;
 }
 
 .search-bar button {
@@ -284,4 +299,54 @@ table.table tr:hover td {
     clip: rect(0, 0, 0, 0);
     white-space: nowrap;
     border-width: 0;
+}
+
+/* Loading Overlay */
+.loading-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background-color: rgba(255, 255, 255, 0.7);
+    /* Slightly more transparent for glass effect */
+    backdrop-filter: blur(8px);
+    /* Modern glassmorphism blur */
+    -webkit-backdrop-filter: blur(8px);
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    z-index: 9999;
+    transition: opacity 0.3s ease;
+}
+
+.loading-overlay.hidden {
+    opacity: 0;
+    pointer-events: none;
+    visibility: hidden;
+}
+
+/* Spinner */
+.spinner {
+    width: 80px;
+    /* Bigger size */
+    height: 80px;
+    border: 4px solid rgba(59, 130, 246, 0.1);
+    /* Very subtle track */
+    border-top: 4px solid var(--primary-color);
+    border-radius: 50%;
+    animation: spin 1s cubic-bezier(0.55, 0.055, 0.675, 0.19) infinite;
+    /* Smoother spin */
+    box-shadow: 0 0 15px rgba(59, 130, 246, 0.2);
+    /* Soft glow */
+}
+
+@keyframes spin {
+    0% {
+        transform: rotate(0deg);
+    }
+
+    100% {
+        transform: rotate(360deg);
+    }
 }

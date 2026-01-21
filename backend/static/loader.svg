@@ -1,0 +1,36 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" width="100" height="100">
+  <defs>
+    <linearGradient id="grad" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" style="stop-color:#4facfe;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#00f2fe;stop-opacity:1" />
+    </linearGradient>
+  </defs>
+  
+  <!-- Pulsing Background Circle -->
+  <circle cx="50" cy="50" r="45" fill="none" stroke="#e0e0e0" stroke-width="2">
+    <animate attributeName="r" from="45" to="48" dur="1.5s" repeatCount="indefinite" begin="0s" />
+    <animate attributeName="opacity" from="1" to="0" dur="1.5s" repeatCount="indefinite" begin="0s" />
+  </circle>
+
+  <!-- Spinning Border -->
+  <circle cx="50" cy="50" r="40" fill="none" stroke="url(#grad)" stroke-width="6" stroke-linecap="round" stroke-dasharray="180 270">
+    <animateTransform attributeName="transform" type="rotate" from="0 50 50" to="360 50 50" dur="1s" repeatCount="indefinite" />
+  </circle>
+
+  <!-- Document Icon (Centered) -->
+  <!-- Original was translate(35, 30). Adjusted to (39, 38) to center relative to 50,50 -->
+  <g transform="translate(39, 38) scale(0.6)">
+    <path d="M4,0 L24,0 L32,8 L32,40 L4,40 Z" fill="#2196F3" />
+    <path d="M24,0 L24,8 L32,8" fill="#1976D2" />
+    <!-- Lines inside document -->
+    <rect x="8" y="12" width="20" height="2" fill="white" />
+    <rect x="8" y="18" width="20" height="2" fill="white" />
+    <rect x="8" y="24" width="14" height="2" fill="white" />
+    
+    <!-- Animating scan line -->
+    <rect x="0" y="0" width="40" height="2" fill="#00f2fe" opacity="0.8">
+      <animate attributeName="y" from="0" to="40" dur="1.5s" repeatCount="indefinite" />
+      <animate attributeName="opacity" values="0;1;0" dur="1.5s" repeatCount="indefinite" />
+    </rect>
+  </g>
+</svg>
