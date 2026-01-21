@@ -20,7 +20,7 @@
         <div class="alert alert-error">{{ error }}</div>
         {% endif %}
 
-        <form method="post" action="/upload-report" enctype="multipart/form-data">
+        <form method="post" action="/upload-report" enctype="multipart/form-data" data-no-global-loader="true">
             <div class="upload-box">
                 <h3 style="margin-top:0;">Upload New Document</h3>
                 <p>Drag and drop your file here or click to browse</p>
@@ -28,12 +28,99 @@
                 <br>
                 <small style="color: #888;">Supported formats: PDF, PNG, JPG</small>
                 <br><br>
+
+                <div style="margin-bottom: 20px; display: flex; align-items: center; gap: 10px;">
+                    <label class="switch">
+                        <input type="checkbox" name="handwritten" id="handwrittenToggle">
+                        <span class="slider round"></span>
+                    </label>
+                    <label for="handwrittenToggle" style="cursor: pointer; font-weight: 500;">Handwritten Document
+                        (Beta)</label>
+                </div>
+
+                <style>
+                    /* Toggle Switch CSS */
+                    .switch {
+                        position: relative;
+                        display: inline-block;
+                        width: 50px;
+                        height: 24px;
+                    }
+
+                    .switch input {
+                        opacity: 0;
+                        width: 0;
+                        height: 0;
+                    }
+
+                    .slider {
+                        position: absolute;
+                        cursor: pointer;
+                        top: 0;
+                        left: 0;
+                        right: 0;
+                        bottom: 0;
+                        background-color: #ccc;
+                        -webkit-transition: .4s;
+                        transition: .4s;
+                    }
+
+                    .slider:before {
+                        position: absolute;
+                        content: "";
+                        height: 16px;
+                        width: 16px;
+                        left: 4px;
+                        bottom: 4px;
+                        background-color: white;
+                        -webkit-transition: .4s;
+                        transition: .4s;
+                    }
+
+                    input:checked+.slider {
+                        background-color: #2196F3;
+                    }
+
+                    input:focus+.slider {
+                        box-shadow: 0 0 1px #2196F3;
+                    }
+
+                    input:checked+.slider:before {
+                        -webkit-transform: translateX(26px);
+                        -ms-transform: translateX(26px);
+                        transform: translateX(26px);
+                    }
+
+                    .slider.round {
+                        border-radius: 34px;
+                    }
+
+                    .slider.round:before {
+                        border-radius: 50%;
+                    }
+                </style>
                 <button type="submit" class="primary-btn">Upload & Extract</button>
             </div>
         </form>
     </div>
 
     {% if result_json %}
+
+    <!-- Loading Overlay -->
+    <div id="loadingOverlay"
+        style="display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(255,255,255,0.9); z-index: 9999; flex-direction: column; align-items: center; justify-content: center;">
+        <img src="/static/loader.svg" alt="Processing..." style="width: 120px; height: 120px;">
+        <h2 style="color: #2c3e50; margin-top: 20px;">Extracting Medical Data...</h2>
+        <p style="color: #666;">This requires AI processing and may take up to 30 seconds.</p>
+    </div>
+
+    <!-- Script to show loader -->
+    <script>
+        document.querySelector('form').addEventListener('submit', function () {
+            document.getElementById('loadingOverlay').style.display = 'flex';
+        });
+    </script>
+
 
     <!-- Results Header -->
     <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
@@ -262,11 +349,23 @@
     </div>
 
     {% endif %}
-</div>
 
-<script>
-    function confirmSave() {
-        return confirm("Proceed to harmonize this data to FHIR?");
-    }
-</script>
+    <!-- Loading Overlay -->
+    <div id="loadingOverlay"
+        style="display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(255,255,255,0.95); z-index: 9999; flex-direction: column; align-items: center; justify-content: center;">
+        <img src="/static/loader.svg" alt="Processing..." style="width: 120px; height: 120px;">
+        <h2 style="color: #2c3e50; margin-top: 20px;">Extracting Medical Data...</h2>
+        <p style="color: #666; font-size: 1.1em;">Analyzing document structure and clinical entities.</p>
+        <p style="color: #888; font-size: 0.9em; margin-top: 5px;">This typically takes 10-20 seconds.</p>
+    </div>
+
+    <script>
+        document.querySelector('form').addEventListener('submit', function (e) {
+            // Stop global loader from triggering
+            e.stopPropagation();
+            // Show overlay on submit
+            document.getElementById('loadingOverlay').style.display = 'flex';
+        });
+    </script>
+</div>
 {% endblock %}
